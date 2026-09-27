@@ -16,60 +16,60 @@ def send_telegram(message):
     requests.post(url, json=payload)
 
 async def run_scraper():
-    send_telegram("🤖 *Bot Winner DZ : Lancement de la recherche ciblée...*")
+    send_telegram("🤖 *Bot Winner DZ : Analyse avec contournement du blocage...*")
     
-    # Mot-clé large et direct sans guillemets pour éviter le blocage Meta
-    search_query = "livraison"
-    
-    url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DZ&q={search_query}&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped&media_type=all"
+    # URL directe pour la recherche "Prix choc"
+    url = "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DZ&q=Prix%20choc&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped&media_type=all"
     
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        # User-Agent pour simuler un vrai navigateur PC
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+        # Lancement avec arguments anti-détection
+        browser = await p.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
         )
+        
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={'width': 1280, 'height': 800}
+        )
+        
         page = await context.new_page()
         
-        await page.goto(url, wait_until="domcontentloaded")
-        await page.wait_for_timeout(8000)
-        
-        # Scroll vers le bas pour forcer le chargement des cartes
-        await page.evaluate("window.scrollBy(0, 1000)")
-        await page.wait_for_timeout(3000)
-        
-        # Sélecteurs multiples pour détecter les annonces
-        ads_cards = await page.query_selector_all('div[data-testid="ad_card"], div._7jvw, div[role="article"]')
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=60000)
+            await page.wait_for_timeout(10000)
+            
+            # Défilement progressif pour charger les annonces
+            for _ in range(3):
+                await page.evaluate("window.scrollBy(0, 800)")
+                await page.wait_for_timeout(2000)
+            
+            # Récupération du contenu
+            ads_cards = await page.query_selector_all('div[role="article"], div[data-testid="ad_card"]')
+            
+            if not ads_cards:
+                send_telegram("⚠️ *Meta a bloqué l'accès automatisé. Essayez de relancer dans quelques minutes.*")
+                await browser.close()
+                return
 
-        if not ads_cards:
-            send_telegram("⚠️ *Aucune annonce trouvée avec ce filtre. Nouvelle tentative au prochain cycle.*")
-            await browser.close()
-            return
-
-        send_telegram(f"🔥 *{len(ads_cards)} publicités actives détectées sur Meta Ads !*")
-        
-        winners_found = 0
-        for card in ads_cards:
-            try:
+            send_telegram(f"🔥 *{len(ads_cards)} publicités détectées sur Meta Ads !*")
+            
+            winners_found = 0
+            for card in ads_cards[:5]:
                 text = await card.inner_text()
                 lines = [line.strip() for line in text.split('\n') if line.strip()]
-                if not lines:
-                    continue
-                
-                preview = " ".join(lines[:4])
+                preview = " ".join(lines[:3]) if lines else "Offre détectée"
                 
                 msg = f"📦 *PRODUIT WINNER DZ #{winners_found + 1}*\n\n"
-                msg += f"📝 *Aperçu de l'offre :*\n_{preview[:180]}..._\n\n"
-                msg += f"👉 [Ouvrir dans Meta Ads]({url})"
+                msg += f"📝 *Aperçu :*\n_{preview[:150]}..._\n\n"
+                msg += f"👉 [Voir sur Meta Ads]({url})"
                 
                 send_telegram(msg)
                 winners_found += 1
-                
-                if winners_found >= 5:
-                    break
-            except Exception:
-                continue
-                
+
+        except Exception as e:
+            send_telegram(f"❌ *Erreur lors du traitement :* `{str(e)[:100]}`")
+            
         await browser.close()
 
 if __name__ == "__main__":
