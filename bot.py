@@ -21,7 +21,6 @@ def fetch_ads():
         send_telegram("❌ *Erreur : META_API_TOKEN manquant dans GitHub Secrets.*")
         return
 
-    # Endpoint officiel de l'API Ad Library
     url = "https://graph.facebook.com/v19.0/ads_archive"
     
     params = {
