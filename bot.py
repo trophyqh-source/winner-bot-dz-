@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 import requests
 from playwright.async_api import async_playwright
 
@@ -16,40 +17,48 @@ def send_telegram(message):
     requests.post(url, json=payload)
 
 async def run_scraper():
-    send_telegram("🤖 *Bot Winner DZ : Analyse avec contournement amélioré...*")
+    send_telegram("🤖 *Bot Winner DZ : Tentative en mode furtif...*")
     
-    # URL de recherche Meta Ads Library
     url = "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DZ&q=Prix%20choc&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped&media_type=all"
 
     async with async_playwright() as p:
-        # Lancement de Chromium avec options anti-détection
+        # Lancement avec arguments d'évitement avancés
         browser = await p.chromium.launch(
             headless=True,
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-blink-features=AutomationControlled'
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--disable-web-security'
             ]
         )
         
-        # Simulation d'un vrai navigateur utilisateur (User-Agent récent)
+        # Simulation complète d'un navigateur réel avec en-têtes
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={'width': 1280, 'height': 800}
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            viewport={'width': 1366, 'height': 768},
+            extra_http_headers={
+                'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Sec-Ch-Ua': '"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"'
+            }
         )
 
         page = await context.new_page()
 
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(5000)
+            # Navigation avec pause aléatoire
+            await page.goto(url, wait_until="networkidle", timeout=60000)
+            await page.wait_for_timeout(random.randint(4000, 7000))
 
-            # Défilement progressif pour charger les annonces
-            for _ in range(3):
-                await page.evaluate("window.scrollBy(0, 800)")
-                await page.wait_for_timeout(2000)
+            # Simulation d'un comportement humain (scroll lent)
+            for _ in range(4):
+                await page.evaluate(f"window.scrollBy(0, {random.randint(500, 900)})")
+                await page.wait_for_timeout(random.randint(1500, 3000))
 
-            # Récupération du contenu
+            # Récupération des cartes d'annonces
             ads_cards = await page.query_selector_all('div[role="article"], div[data-testid="ad_card"]')
 
             if not ads_cards:
