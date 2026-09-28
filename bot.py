@@ -2,6 +2,7 @@ import json
 import os
 import random
 import time
+import urllib.parse
 import requests
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -10,7 +11,7 @@ GH_TOKEN = os.environ.get("GH_TOKEN")
 
 
 def get_all_products():
-    """Base de données élargie de produits avec métriques d'engagement variées"""
+    """Base de données de produits avec métriques d'engagement"""
     return [
         {
             "id": "prod_1",
@@ -205,9 +206,7 @@ def load_seen_ids():
         if res.status_code == 200:
             for gist in res.json():
                 if "seen_products.json" in gist["files"]:
-                    file_url = gist["files"]["seen_products.json"][
-                        "raw_url"
-                    ]
+                    file_url = gist["files"]["seen_products.json"]["raw_url"]
                     file_res = requests.get(file_url)
                     return file_res.json()
     except Exception as e:
@@ -255,12 +254,13 @@ def save_seen_ids(seen_list):
 
 
 def send_telegram(text):
-    """Envoie un message textuel simple à Telegram"""
+    """Envoie un message textuel à Telegram"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "HTML",
+        "disable_web_page_preview": True,
     }
     requests.post(url, json=payload)
 
@@ -283,19 +283,21 @@ def run_bot():
 
     selected = shuffled[:3]
 
-    # Envoi de l'en-tête
-    send_telegram(
-        "🤖 <b>Bot Winner DZ : Analyse des tendances en cours...</b>"
-    )
+    # Envoi des en-têtes
+    send_telegram("🤖 <b>Bot Winner DZ : Analyse des tendances en cours...</b>")
     time.sleep(1)
-    send_telegram(
-        "🔥 <b>Top Produits Gagnants Détectés (Mode Simulation)</b> 🔥"
-    )
+    send_telegram("🔥 <b>Top Produits Gagnants Détectés (Mode Simulation)</b> 🔥")
     time.sleep(1)
 
     new_seen = []
     for idx, item in enumerate(selected, 1):
-        # Formatage exact du design
+        # Préparation des liens de recherche automatique
+        query_encoded = urllib.parse.quote(item["name"])
+        ali_link = f"https://www.aliexpress.com/wholesale?SearchText={query_encoded}"
+        tiktok_link = f"https://www.tiktok.com/search?q={query_encoded}"
+        img_link = f"https://www.google.com/search?tbm=isch&q={query_encoded}"
+
+        # Construction du message
         msg = f"🏆 <b>PRODUIT WINNER DZ #{idx}</b>\n\n"
         msg += f"📦 <b>Nom :</b> {item['name']}\n"
         msg += f"📈 <b>Statut :</b> {item['status']}\n\n"
@@ -304,13 +306,17 @@ def run_bot():
         msg += f"• 💬 {item['comments']} Commentaires\n"
         msg += f"• 🔁 {item['shares']} Partages\n"
         msg += f"• 🔖 {item['saves']} Enregistrements\n\n"
+        msg += f"🔍 <b>Recherche rapide en 1 clic :</b>\n"
+        msg += f'• 🛍️ <a href="{ali_link}">Voir les modèles sur AliExpress</a>\n'
+        msg += f'• 🎵 <a href="{tiktok_link}">Voir les vidéos sur TikTok</a>\n'
+        msg += f'• 🖼️ <a href="{img_link}">Voir les photos sur Google Images</a>\n\n'
         msg += f"🚀 <i>Prêt pour le test e-commerce !</i>"
 
         send_telegram(msg)
         new_seen.append(item["id"])
         time.sleep(1)
 
-    # Mise à jour des produits vus
+    # Sauvegarde des produits traités
     save_seen_ids(seen_ids + new_seen)
 
 
