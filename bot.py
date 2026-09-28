@@ -2,13 +2,12 @@ import json
 import os
 import random
 import requests
-from bs4 import BeautifulSoup
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 HISTORY_FILE = "recent_products.json"
-MAX_HISTORY = 10  # Mémoire pour éviter les doublons
+MAX_HISTORY = 10
 
 
 def load_history():
@@ -26,29 +25,9 @@ def save_history(history):
     json.dump(history, f, ensure_ascii=False, indent=4)
 
 
-def fetch_text_trends():
-  """Récupère des tendances textuelles légères depuis une source publique ouverte"""
-  products = []
-  try:
-    url = "https://news.ycombinator.com/"
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        )
-    }
-
-    response = requests.get(url, headers=headers, timeout=10)
-    if response.status_code == 200:
-      soup = BeautifulSoup(response.text, "html.parser")
-      for item in soup.find_all("span", class_="titleline", limit=20):
-        text = item.a.get_text(strip=True)
-        if len(text) > 8 and text not in products:
-          products.append(text)
-  except Exception as e:
-    print(f"⚠️ Erreur de lecture : {e}")
-
-  # Liste de secours e-commerce fiable si besoin
-  fallback = [
+def get_products():
+  # Liste de produits e-commerce ciblés et validés
+  return [
       "Mini Aspirateur Sans Fil Portable (Voiture/Maison)",
       "Pistolet de Massage Musculaire Pro",
       "Support Téléphone Magnétique avec Chargeur",
@@ -57,12 +36,9 @@ def fetch_text_trends():
       "Gourde Motivante Dégradée avec Marqueur de Temps",
       "Épilateur à Lumière Pulsée (IPL)",
       "Lampe Bureau LED Tactile avec Chargeur Sans Fil",
+      "Testeur d'Épaisseur de Peinture Numérique",
+      "Mini Imprimante Thermique Bluetooth pour Colis",
   ]
-
-  if len(products) < 3:
-    return fallback
-
-  return products
 
 
 def select_unique_products(all_products, count=3):
@@ -91,7 +67,7 @@ def send_telegram(message):
 
 
 def run_bot():
-  all_products = fetch_text_trends()
+  all_products = get_products()
   products = select_unique_products(all_products, 3)
 
   send_telegram("🔥 **Bot Winner DZ : Nouveaux Produits Détectés** 🔥")
