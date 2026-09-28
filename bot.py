@@ -7,11 +7,11 @@ import requests
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-GH_TOKEN = os.environ.get("GH_TOKEN")
+SEEN_FILE = "seen_products.json"
 
 
 def get_all_products():
-    """Base de données de produits avec métriques d'engagement"""
+    """Base de données de produits"""
     return [
         {
             "id": "prod_1",
@@ -197,58 +197,20 @@ def get_all_products():
 
 
 def load_seen_ids():
-    """Charge la liste stricte des produits déjà envoyés depuis GitHub Gist"""
-    if not GH_TOKEN:
-        return []
-    try:
-        headers = {"Authorization": f"token {GH_TOKEN}"}
-        res = requests.get("https://api.github.com/gists", headers=headers)
-        if res.status_code == 200:
-            for gist in res.json():
-                if "seen_products.json" in gist["files"]:
-                    file_url = gist["files"]["seen_products.json"]["raw_url"]
-                    file_res = requests.get(file_url)
-                    return file_res.json()
-    except Exception as e:
-        print(f"Erreur chargement mémoires : {e}")
+    """Lit l'historique depuis le fichier local"""
+    if os.path.exists(SEEN_FILE):
+        try:
+            with open(SEEN_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
     return []
 
 
 def save_seen_ids(seen_list):
-    """Sauvegarde la liste des produits consultés dans GitHub Gist"""
-    if not GH_TOKEN:
-        return
-    try:
-        headers = {
-            "Authorization": f"token {GH_TOKEN}",
-            "Accept": "application/vnd.github.v3+json",
-        }
-        data = {
-            "description": "Sauvegarde des produits envoyés",
-            "public": False,
-            "files": {"seen_products.json": {"content": json.dumps(seen_list)}},
-        }
-
-        res = requests.get("https://api.github.com/gists", headers=headers)
-        gist_id = None
-        if res.status_code == 200:
-            for gist in res.json():
-                if "seen_products.json" in gist["files"]:
-                    gist_id = gist["id"]
-                    break
-
-        if gist_id:
-            requests.patch(
-                f"https://api.github.com/gists/{gist_id}",
-                headers=headers,
-                json=data,
-            )
-        else:
-            requests.post(
-                "https://api.github.com/gists", headers=headers, json=data
-            )
-    except Exception as e:
-        print(f"Erreur sauvegarde mémoires : {e}")
+    """Enregistre l'historique dans le fichier local"""
+    with open(SEEN_FILE, "w", encoding="utf-8") as f:
+        json.dump(seen_list, f, ensure_ascii=False, indent=2)
 
 
 def send_telegram(text):
@@ -267,37 +229,29 @@ def run_bot():
     all_prods = get_all_products()
     seen_ids = load_seen_ids()
 
-    # Exclure TOUS les produits déjà envoyés dans le passé
+    # On ne prend QUE les produits qui n'ont jamais été envoyés
     unseen = [p for p in all_prods if p["id"] not in seen_ids]
 
-    # Si la réserve est épuisée pour sélectionner 5 nouveaux produits, on réinitialise l'historique complet
+    # Si tous les produits ont été envoyés, on réinitialise pour refaire un cycle complet
     if len(unseen) < 5:
         seen_ids = []
         unseen = all_prods
 
-    # Mélange aléatoire des produits restants
-    random.seed(int(time.time()))
-    shuffled = list(unseen)
-    random.shuffle(shuffled)
+    # Sélection des 5 prochains produits DANS L'ORDRE exact
+    selected = unseen[:5]
 
-    # Sélection stricte de 5 produits
-    selected = shuffled[:5]
-
-    # Envoi des en-têtes
     send_telegram("🤖 <b>Bot Winner DZ : Analyse des tendances en cours...</b>")
     time.sleep(1)
-    send_telegram("🔥 <b>Top Produits Gagnants Détectés (Mode Simulation)</b> 🔥")
+    send_telegram("🔥 <b>Top 5 Produits Gagnants Détectés</b> 🔥")
     time.sleep(1)
 
     new_seen = []
     for idx, item in enumerate(selected, 1):
-        # Préparation des liens de recherche
         query_encoded = urllib.parse.quote(item["name"])
         ali_link = f"https://www.aliexpress.com/wholesale?SearchText={query_encoded}"
         tiktok_link = f"https://www.tiktok.com/search?q={query_encoded}"
         img_link = f"https://www.google.com/search?tbm=isch&q={query_encoded}"
 
-        # Construction du message avec ton design exact
         msg = f"🏆 <b>PRODUIT WINNER DZ #{idx}</b>\n\n"
         msg += f"📦 <b>Nom :</b> {item['name']}\n"
         msg += f"📈 <b>Statut :</b> {item['status']}\n\n"
@@ -316,7 +270,7 @@ def run_bot():
         new_seen.append(item["id"])
         time.sleep(1)
 
-    # Mémoriser les identifiants envoyés
+    # Sauvegarde locale
     save_seen_ids(seen_ids + new_seen)
 
 
