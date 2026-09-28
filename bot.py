@@ -197,7 +197,7 @@ def get_all_products():
 
 
 def load_seen_ids():
-    """Charge l'historique depuis GitHub Gist si GH_TOKEN est configuré"""
+    """Charge la liste stricte des produits déjà envoyés depuis GitHub Gist"""
     if not GH_TOKEN:
         return []
     try:
@@ -215,7 +215,7 @@ def load_seen_ids():
 
 
 def save_seen_ids(seen_list):
-    """Sauvegarde l'historique dans GitHub Gist"""
+    """Sauvegarde la liste des produits consultés dans GitHub Gist"""
     if not GH_TOKEN:
         return
     try:
@@ -226,9 +226,7 @@ def save_seen_ids(seen_list):
         data = {
             "description": "Sauvegarde des produits envoyés",
             "public": False,
-            "files": {
-                "seen_products.json": {"content": json.dumps(seen_list[-50:])}
-            },
+            "files": {"seen_products.json": {"content": json.dumps(seen_list)}},
         }
 
         res = requests.get("https://api.github.com/gists", headers=headers)
@@ -269,19 +267,21 @@ def run_bot():
     all_prods = get_all_products()
     seen_ids = load_seen_ids()
 
-    # Filtrer les produits non vus
+    # Exclure TOUS les produits déjà envoyés dans le passé
     unseen = [p for p in all_prods if p["id"] not in seen_ids]
 
-    if len(unseen) < 3:
+    # Si la réserve est épuisée pour sélectionner 5 nouveaux produits, on réinitialise l'historique complet
+    if len(unseen) < 5:
         seen_ids = []
         unseen = all_prods
 
-    # Mélange aléatoire
+    # Mélange aléatoire des produits restants
     random.seed(int(time.time()))
     shuffled = list(unseen)
     random.shuffle(shuffled)
 
-    selected = shuffled[:3]
+    # Sélection stricte de 5 produits
+    selected = shuffled[:5]
 
     # Envoi des en-têtes
     send_telegram("🤖 <b>Bot Winner DZ : Analyse des tendances en cours...</b>")
@@ -291,13 +291,13 @@ def run_bot():
 
     new_seen = []
     for idx, item in enumerate(selected, 1):
-        # Préparation des liens de recherche automatique
+        # Préparation des liens de recherche
         query_encoded = urllib.parse.quote(item["name"])
         ali_link = f"https://www.aliexpress.com/wholesale?SearchText={query_encoded}"
         tiktok_link = f"https://www.tiktok.com/search?q={query_encoded}"
         img_link = f"https://www.google.com/search?tbm=isch&q={query_encoded}"
 
-        # Construction du message
+        # Construction du message avec ton design exact
         msg = f"🏆 <b>PRODUIT WINNER DZ #{idx}</b>\n\n"
         msg += f"📦 <b>Nom :</b> {item['name']}\n"
         msg += f"📈 <b>Statut :</b> {item['status']}\n\n"
@@ -316,7 +316,7 @@ def run_bot():
         new_seen.append(item["id"])
         time.sleep(1)
 
-    # Sauvegarde des produits traités
+    # Mémoriser les identifiants envoyés
     save_seen_ids(seen_ids + new_seen)
 
 
