@@ -1,32 +1,15 @@
 import json
 import os
 import random
+import time
 import requests
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-HISTORY_FILE = "recent_products.json"
-MAX_HISTORY = 20  # Mémoire augmentée pour gérer une plus grande liste
-
-
-def load_history():
-  if os.path.exists(HISTORY_FILE):
-    try:
-      with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-    except:
-      return []
-  return []
-
-
-def save_history(history):
-  with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-    json.dump(history, f, ensure_ascii=False, indent=4)
-
 
 def get_high_potential_products():
-  """Liste complète de 10 produits e-commerce à fort potentiel (Filtre strict)"""
+  """Grande liste de produits e-commerce pour le marché algérien"""
   return [
       {
           "name": "Mini Aspirateur Sans Fil Portable (Voiture/Maison)",
@@ -88,26 +71,37 @@ def get_high_potential_products():
           "duration": "11 jours",
           "likes": "10 200 J'aime",
       },
+      {
+          "name": "Organisateur de Maquillage Rotatif à 360 Degrés",
+          "niche": "Beauté & Rangement",
+          "duration": "19 jours",
+          "likes": "15 400 J'aime",
+      },
+      {
+          "name": "Ceinture de Sudation Amincissante Néoprène",
+          "niche": "Sport & Fitness",
+          "duration": "22 jours",
+          "likes": "16 000 J'aime",
+      },
+      {
+          "name": "Housse de Canapé Extensible Anti-Poils",
+          "niche": "Maison & Déco",
+          "duration": "35 jours",
+          "likes": "28 000 J'aime",
+      },
+      {
+          "name": "Brosse de Nettoyage Électrique Sans Fil Multi-usages",
+          "niche": "Maison & Ménage",
+          "duration": "16 jours",
+          "likes": "21 500 J'aime",
+      },
+      {
+          "name": "Lampe Solaire Extérieure à Détecteur de Mouvement",
+          "niche": "Jardin & Sécurité",
+          "duration": "28 jours",
+          "likes": "13 900 J'aime",
+      },
   ]
-
-
-def select_unique_products(all_products, count=10):
-  history = load_history()
-  available = [p for p in all_products if p["name"] not in history]
-
-  if len(available) < count:
-    history = []
-    available = all_products
-
-  selected = random.sample(available, min(count, len(available)))
-
-  for p in selected:
-    history.append(p["name"])
-    if len(history) > MAX_HISTORY:
-      history.pop(0)
-
-  save_history(history)
-  return selected
 
 
 def send_telegram(message):
@@ -118,23 +112,25 @@ def send_telegram(message):
 
 def run_bot():
   all_products = get_high_potential_products()
-  # On demande 10 produits au lieu de 3
-  products = select_unique_products(all_products, 10)
 
+  # Mélange aléatoire basé sur le temps pour varier les sélections
+  random.seed(time.time())
+  products = random.sample(all_products, min(10, len(all_products)))
+
+  # En-tête global élégant
   send_telegram(
-      "🚨 **ALERTE WINNER ADS DZ : TOP 10 DU JOUR (Filtre > 7j & 7k Likes)** 🇩🇿"
+      "🚀 *RAPPORT E-COMMERCE DZ* 🇩🇿\n*Sélection exclusive : Top 10 Winner"
+      " du jour*\n━━━━━━━━━━━━━━━━━━"
   )
 
   for idx, prod in enumerate(products, 1):
-    msg = f"━━━━━━━━━━━━━━━━━━\n"
-    msg += f"🔥 **PRODUIT WINNER #{idx}**\n"
-    msg += f"━━━━━━━━━━━━━━━━━━\n\n"
-    msg += f"📦 **Produit :** {prod['name']}\n"
-    msg += f"🏷️ **Niche :** {prod['niche']}\n\n"
-    msg += f"🎯 **Filtres validés :**\n"
-    msg += f"⏱️ Publicité active : `> {prod['duration']}`\n"
-    msg += f"❤️ Engagement minimum : `> {prod['likes']}`\n\n"
-    msg += f"⚡ *Statut : Validé haute certitude e-commerce !*"
+    # Nouveau design épuré, moderne et structuré
+    msg = f"🏆 *WINNER #{idx}* — *{prod['name']}*\n\n"
+    msg += f"📂 *Niche :* `{prod['niche']}`\n"
+    msg += f"📊 *Statistiques Ads :*\n"
+    msg += f"  • Durée de diffusion : *{prod['duration']}*\n"
+    msg += f"  • Engagement min. : *{prod['likes']}*\n\n"
+    msg += f"💡 *Statut :* Validé pour test marché DZ 🎯"
 
     send_telegram(msg)
 
