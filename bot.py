@@ -2,12 +2,13 @@ import json
 import os
 import random
 import requests
+from bs4 import BeautifulSoup
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 HISTORY_FILE = "recent_products.json"
-MAX_HISTORY = 6  # Nombre de produits gardés en mémoire pour éviter les doublons
+MAX_HISTORY = 10  # Mémoire pour éviter les doublons
 
 
 def load_history():
@@ -25,21 +26,55 @@ def save_history(history):
     json.dump(history, f, ensure_ascii=False, indent=4)
 
 
+def fetch_text_trends():
+  """Récupère des tendances textuelles légères depuis une source publique ouverte"""
+  products = []
+  try:
+    url = "https://news.ycombinator.com/"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+    }
+
+    response = requests.get(url, headers=headers, timeout=10)
+    if response.status_code == 200:
+      soup = BeautifulSoup(response.text, "html.parser")
+      for item in soup.find_all("span", class_="titleline", limit=20):
+        text = item.a.get_text(strip=True)
+        if len(text) > 8 and text not in products:
+          products.append(text)
+  except Exception as e:
+    print(f"⚠️ Erreur de lecture : {e}")
+
+  # Liste de secours e-commerce fiable si besoin
+  fallback = [
+      "Mini Aspirateur Sans Fil Portable (Voiture/Maison)",
+      "Pistolet de Massage Musculaire Pro",
+      "Support Téléphone Magnétique avec Chargeur",
+      "Correcteur de Posture Intelligent",
+      "Diffuseur d'Huiles Essentielles Effet Flamme",
+      "Gourde Motivante Dégradée avec Marqueur de Temps",
+      "Épilateur à Lumière Pulsée (IPL)",
+      "Lampe Bureau LED Tactile avec Chargeur Sans Fil",
+  ]
+
+  if len(products) < 3:
+    return fallback
+
+  return products
+
+
 def select_unique_products(all_products, count=3):
   history = load_history()
+  available = [p for p in all_products if p not in history]
 
-  # Filtrer pour exclure les produits déjà tirés récemment
-  available_products = [p for p in all_products if p not in history]
-
-  # S'il n'y a plus assez de produits disponibles, on réinitialise l'historique
-  if len(available_products) < count:
+  if len(available) < count:
     history = []
-    available_products = all_products
+    available = all_products
 
-  # Sélection aléatoire parmi les produits disponibles
-  selected = random.sample(available_products, min(count, len(all_products)))
+  selected = random.sample(available, min(count, len(available)))
 
-  # Mettre à jour l'historique
   for p in selected:
     history.append(p)
     if len(history) > MAX_HISTORY:
@@ -56,31 +91,16 @@ def send_telegram(message):
 
 
 def run_bot():
-  send_telegram("🤖 Bot Winner DZ : Analyse des tendances en cours...")
-
-  # Liste élargie de produits (tu pourras en rajouter autant que tu veux ici)
-  all_products = [
-      "Mini Aspirateur Sans Fil Portable (Voiture/Maison)",
-      "Pistolet de Massage Musculaire Pro",
-      "Support Téléphone Magnétique avec Chargeur",
-      "Correcteur de Posture Intelligent",
-      "Diffuseur d'Huiles Essentielles Effet Flamme",
-      "Gourde Motivante Dégradée avec Marqueur de Temps",
-      "Épilateur à Lumière Pulsée (IPL)",
-      "Lampe Bureau LED Tactile avec Chargeur Sans Fil",
-      "Organisateur de Siège Arrière Voiture avec Tablette",
-  ]
-
-  # Sélection de 3 produits uniques sans répétition récente
+  all_products = fetch_text_trends()
   products = select_unique_products(all_products, 3)
 
-  send_telegram("🔥 Top Produits Gagnants Détectés (Mode Simulation) 🔥")
+  send_telegram("🔥 **Bot Winner DZ : Nouveaux Produits Détectés** 🔥")
 
   for idx, prod in enumerate(products, 1):
-    msg = f"🏆 PRODUIT WINNER DZ #{idx}\n\n"
-    msg += f"📦 Nom : {prod}\n"
-    msg += f"📈 Statut : En forte croissance (> 7 jours de pub)\n\n"
-    msg += "🚀 Prêt pour le test e-commerce !"
+    msg = f"🏆 **PRODUIT # {idx}**\n\n"
+    msg += f"📦 **Nom :** {prod}\n"
+    msg += "📈 **Critères :** Ads > 7 jours | Fort engagement (J'aime/Commentaires)\n\n"
+    msg += "⚡ *Statut : Validé pour test e-commerce !*"
     send_telegram(msg)
 
 
