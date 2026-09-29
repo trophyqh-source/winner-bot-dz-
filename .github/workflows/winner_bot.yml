@@ -20,18 +20,19 @@ jobs:
       - name: Installation des dépendances
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests apify-client beautifulsoup4
 
       - name: Exécution du Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
         run: python bot.py
 
       - name: Sauvegarder la mémoire du bot
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add seen_products.json
-          git commit -m "Auto-update seen products [skip ci]" || exit 0
-          git push
+          git add seen_products.json || true
+          git commit -m "Auto-update seen products [skip ci]" || true
+          git push || true
