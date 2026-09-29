@@ -1,7 +1,6 @@
 import json
 import os
 import time
-import urllib.parse
 import requests
 
 # --- CONFIGURATION API & BOT ---
@@ -9,9 +8,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_eSD9fRMu37Y6Vrf2Dyn4bFIhIVRKYE1fD8h1")
 
-SEEN_FILE = "seen_products.json"
 NB_PAR_ENVOI = 5
-STATUS = "🔥 Produit Tendance TikTok Ads"
 
 def send_telegram(text):
     """Envoie un message textuel à Telegram"""
@@ -24,46 +21,45 @@ def send_telegram(text):
     }
     requests.post(url, json=payload, timeout=30)
 
-def fetch_apify_tiktok_ads():
-    """Interroge Apify pour scraper des vidéos / pubs TikTok tendance"""
-    print("Démarrage de la recherche Apify...")
+def fetch_apify_dz_ads():
+    """Scrape les pubs TikTok Ads ciblant spécifiquement l'Algérie (DZ)"""
+    print("Recherche des Ads TikTok Algérie via Apify...")
     
-    # Utilisation d'un Actor Apify standard et rapide pour TikTok
-    url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
+    # Scraper ciblé TikTok Ads Library
+    actor_id = "clockworks~tiktok-ads-scraper"
+    url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
+    # Filtres ciblés : Pays DZ (Algérie), pubs actives (>= 7 jours)
     payload = {
-        "searchQueries": ["viral product", "dropshipping", "must have"],
-        "resultsPerPage": 5,
-        "searchType": "video"
+        "countryCode": "DZ",          # Algérie
+        "period": "30",               # Ce mois-ci (30 derniers jours)
+        "minDaysActive": 7,           # Pubs qui tournent depuis au moins 7 jours
+        "limit": 10
     }
 
     try:
-        # Exécution synchrone (réponse directe)
-        res = requests.post(url, json=payload, timeout=45)
+        res = requests.post(url, json=payload, timeout=50)
         if res.status_code not in [200, 201]:
             print(f"Erreur Apify status code : {res.status_code}")
             return []
 
         items = res.json()
         if not isinstance(items, list) or len(items) == 0:
-            print("Apify n'a renvoyé aucun item.")
+            print("Aucune pub DZ trouvée avec ces critères.")
             return []
 
         products = []
         for idx, item in enumerate(items[:NB_PAR_ENVOI], 1):
-            text = item.get("text") or item.get("desc") or f"Produit TikTok #{idx}"
-            title = text.split("\n")[0][:50] # Prend la première ligne du texte
-            play_count = item.get("playCount", "10K+")
-            digg_count = item.get("diggCount", "1K+")
-            share_count = item.get("shareCount", "500+")
+            title = item.get("adTitle") or item.get("brandName") or item.get("text") or f"Produit Winner DZ #{idx}"
+            days_active = item.get("daysActive", "7+")
+            impressions = item.get("impressions", "Élevé")
+            ad_url = item.get("adUrl") or item.get("videoUrl") or ""
 
             products.append({
-                "id": f"apify_{item.get('id', idx)}",
-                "name": title if len(title) > 5 else f"Gadget Tendance TikTok #{idx}",
-                "status": STATUS,
-                "likes": f"{digg_count} J'aime / {play_count} Vues",
-                "comments": "Actif sur TikTok",
-                "shares": f"{share_count}",
+                "name": title.strip().replace("\n", " ")[:60],
+                "days": days_active,
+                "views": impressions,
+                "url": ad_url
             })
         return products
 
@@ -72,34 +68,26 @@ def fetch_apify_tiktok_ads():
         return []
 
 def run_bot():
-    send_telegram("🤖 <b>WinnerBotDZ : Scraping Apify en cours...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Recherche des Ads en Algérie (> 7 jours)...</b>")
     
-    prods = fetch_apify_tiktok_ads()
+    prods = fetch_apify_dz_ads()
     
     if not prods:
-        send_telegram("⚠️ <i>L'API Apify n'a pas renvoyé de données cette fois-ci. Vérifie tes crédits Apify ou le token.</i>")
+        send_telegram("⚠️ <i>Aucune nouvelle pub TikTok Ads trouvée pour l'Algérie ce mois-ci pour le moment.</i>")
         return
 
-    send_telegram("🔥 <b>Top 5 Nouveaux Produits Détectés en Direct</b> 🔥")
+    send_telegram("🔥 <b>Top Ads TikTok Algérie Détectées</b> 🔥")
     time.sleep(1)
 
     for idx, item in enumerate(prods, 1):
-        query_encoded = urllib.parse.quote(item["name"])
-        ali_link = f"https://www.aliexpress.com/wholesale?SearchText={query_encoded}"
-        tiktok_link = f"https://www.tiktok.com/search?q={query_encoded}"
-        img_link = f"https://www.google.com/search?tbm=isch&q={query_encoded}"
-
-        msg = f"🏆 <b>PRODUIT WINNER DZ #{idx}</b>\n\n"
-        msg += f"📦 <b>Nom / Description :</b> {item['name']}\n"
-        msg += f"📈 <b>Statut :</b> {item['status']}\n\n"
-        msg += "📊 <b>Engagement TikTok :</b>\n"
-        msg += f"• 👁️ {item['likes']}\n"
-        msg += f"• 🔁 {item['shares']} Partages\n\n"
-        msg += "🔍 <b>Recherche rapide en 1 clic :</b>\n"
-        msg += f'• 🛍️ <a href="{ali_link}">Voir sur AliExpress</a>\n'
-        msg += f'• 🎵 <a href="{tiktok_link}">Voir sur TikTok</a>\n'
-        msg += f'• 🖼️ <a href="{img_link}">Voir sur Google Images</a>\n\n'
-        msg += "🚀 <i>Prêt pour le test e-commerce !</i>"
+        # Format épuré et concis
+        msg = f"🏆 <b>WINNER DZ #{idx}</b>\n\n"
+        msg += f"📦 <b>Produit / Pub :</b> {item['name']}\n"
+        msg += f"⏳ <b>Durée active :</b> > {item['days']} jours en 🇩🇿\n"
+        msg += f"📊 <b>Impressions :</b> {item['views']}\n"
+        
+        if item['url']:
+            msg += f"\n🔗 <a href=\"{item['url']}\">Voir la vidéo de la pub</a>"
 
         send_telegram(msg)
         time.sleep(1)
