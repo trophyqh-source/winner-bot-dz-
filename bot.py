@@ -11,20 +11,26 @@ APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_eSD9fRMu37Y6Vrf2Dyn4bFIhI
 
 NB_PAR_ENVOI = 5
 
-# Recherche ciblée sur les produits physiques et gadgets
+# Mots-clés ciblés Gadgets Homme / High-Tech / Auto / Utilitaires
 KEYWORDS_GADGETS = [
-    "gadget algerie",
     "accessoire voiture algerie",
-    "produit maison algerie",
-    "boutique en ligne algerie 58 wilayas",
-    "astuce produit algerie"
+    "gadget tech algerie",
+    "outil utile algerie",
+    "accessoire telephone algerie",
+    "produit astucieux algerie 58 wilayas",
+    "ecouteur bluetooth algerie"
 ]
 
-# Exclusion stricte de la nourriture, pâtisserie et services locaux
+# Exclusion stricte de la nourriture, services ET produits 100% féminins/cosmétiques
 EXCLUDE_WORDS = [
+    # Nourriture / Services
     "bento", "cake", "cookie", "gateau", "patisserie", "brownie", "sweet",
     "food", "chocolat", "manger", "restaurant", "fast food", "snack",
-    "salon", "coiffeur", "ongles", "location", "auto ecole"
+    "salon", "coiffeur", "ongles", "location", "auto ecole",
+    # Beauté / Mode / Produits exclusivement féminins
+    "maquillage", "makeup", "robe", "abaya", "hijab", "sac femme", "talons",
+    "epilation", "skincare", "serum visage", "perruque", "extensions", 
+    "vernis", "rouge a levre", "palette", "collant", "lingerie"
 ]
 
 def send_telegram(text):
@@ -39,14 +45,14 @@ def send_telegram(text):
     requests.post(url, json=payload, timeout=30)
 
 def fetch_apify_gadgets_dz():
-    """Scrape TikTok pour trouver exclusivement des gadgets/produits e-commerce DZ"""
-    print("Recherche de gadgets e-commerce DZ...")
+    """Scrape TikTok pour trouver des gadgets High-Tech, Auto et Outillage DZ"""
+    print("Recherche de gadgets High-Tech & Auto DZ...")
     
     url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
     payload = {
         "searchQueries": KEYWORDS_GADGETS,
-        "resultsPerPage": 20,
+        "resultsPerPage": 25,
         "searchType": "video"
     }
 
@@ -61,21 +67,21 @@ def fetch_apify_gadgets_dz():
             return []
 
         products = []
-        seen_authors = set()  # Pour éviter les doublons de la même page
+        seen_authors = set()  # Dédoublonnage des comptes
 
         for item in items:
             author = item.get("authorMeta", {}).get("name", "").lower()
             text = (item.get("text") or item.get("desc") or "").lower()
             
-            # 1. Ignorer si l'auteur a déjà été sélectionné dans ce cycle
+            # 1. Ignorer si le compte a déjà donné un produit dans ce scan
             if author and author in seen_authors:
                 continue
 
-            # 2. Vérifier si un mot exclu (nourriture/pâtisserie/services) est présent
+            # 2. Filtrer la nourriture, services et cosmétiques féminins
             if any(bad_word in text for bad_word in EXCLUDE_WORDS):
                 continue
 
-            # 3. Nettoyer le titre
+            # 3. Traiter le titre
             raw_title = item.get("text") or item.get("desc") or ""
             title = raw_title.split("\n")[0][:65].strip()
             
@@ -106,15 +112,15 @@ def fetch_apify_gadgets_dz():
         return []
 
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Filtrage strict Gadgets & E-commerce...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Filtrage Gadgets High-Tech & Auto...</b>")
     
     prods = fetch_apify_gadgets_dz()
     
     if not prods:
-        send_telegram("⚠️ <i>Aucun nouveau gadget trouvé sur ce passage. Réessai automatique au prochain run.</i>")
+        send_telegram("⚠️ <i>Aucun gadget correspondant trouvé lors de ce scan. Réessai automatique au prochain cycle.</i>")
         return
 
-    send_telegram("🔥 <b>Top Gadgets & Produits E-commerce DZ</b> 🔥")
+    send_telegram("🔥 <b>Top Gadgets High-Tech & Auto DZ (58 Wilayas)</b> 🔥")
     time.sleep(1)
 
     for idx, item in enumerate(prods, 1):
