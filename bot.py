@@ -10,17 +10,15 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_eSD9fRMu37Y6Vrf2Dyn4bFIhIVRKYE1fD8h1")
 
 NB_PAR_ENVOI = 5
-MAX_DAYS_OLD = 60  # Maximum 2 mois (60 jours)
 
-# Mots-clés de recherche élargis (E-commerce DZ)
-KEYWORDS_VARIES = [
-    "algerie 58 wilayas livraison",
-    "commande site web algerie",
-    "produit utile algerie",
-    "boutique algerie livraison",
-    "promo algerie livraison domicile",
-    "gadget algerie 58 wilayas",
-    "vetement homme algerie livraison"
+# Mots-clés E-Commerce DZ pour Facebook Ads
+KEYWORDS_FB = [
+    "58 wilayas livraison",
+    "commandez sur notre site",
+    "livraison a domicile algerie",
+    "prix choc algerie",
+    "pantalon homme algerie",
+    "accessoire maison algerie"
 ]
 
 # Exclusions strictes (Nourriture, Services locaux, Cosmétiques 100% femme)
@@ -30,18 +28,6 @@ EXCLUDE_WORDS = [
     "salon", "coiffeur", "ongles", "location", "auto ecole",
     "maquillage", "makeup", "robe", "abaya", "hijab", "talons", "epilation"
 ]
-
-# Indicateurs stricts Algérie
-DZ_INDICATORS = ["algerie", "alger", "dz", "58 wilayas", "58 wilaya", "wilaya", "dinars", "da", "livraison"]
-
-# Indicateurs de vente / Landing Page
-LANDING_TEXTS = ["lien", "bio", "site", "commandez", "commande", "boutique", "store", "shop", "http", "www", ".com", ".dz"]
-
-# --- SEUILS MINIMAUX D'ENGAGEMENT ---
-MIN_LIKES = 5000
-MIN_COMMENTS = 500
-MIN_SAVES = 500
-MIN_SHARES = 300
 
 def send_telegram(text):
     """Envoie un message textuel à Telegram"""
@@ -55,28 +41,20 @@ def send_telegram(text):
     try:
         requests.post(url, json=payload, timeout=30)
     except Exception as e:
-        print(f"Erreur envoi Telegram: {e}")
+        print(f"Erreur envoi Telegram : {e}")
 
-def is_recent(create_time):
-    """Vérifie si la vidéo a moins de 60 jours (2 mois)"""
-    if not create_time:
-        return True
-    try:
-        video_date = datetime.fromtimestamp(create_time)
-        return video_date >= (datetime.now() - timedelta(days=MAX_DAYS_OLD))
-    except Exception:
-        return True
-
-def fetch_apify_winner_products():
-    """Scrape TikTok : Produits DZ + Landing Page + < 2 mois + Gros Engagement"""
-    print("Recherche des Winners DZ stricts...")
+def fetch_facebook_ads():
+    """Scrape la Meta Ad Library pour trouver des pubs E-commerce DZ avec Landing Page"""
+    print("Recherche de Facebook Ads Winners DZ...")
     
-    url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
+    # Utilisation de l'acteur Apify Facebook Ads Scraper
+    url = f"https://api.apify.com/v2/acts/apify~facebook-ads-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
     payload = {
-        "searchQueries": KEYWORDS_VARIES,
-        "resultsPerPage": 50,
-        "searchType": "video"
+        "searchTerms": KEYWORDS_FB,
+        "country": "DZ",
+        "adActiveStatus": "ACTIVE",
+        "resultsLimit": 30
     }
 
     try:
@@ -87,115 +65,83 @@ def fetch_apify_winner_products():
 
         items = res.json()
         if not isinstance(items, list) or len(items) == 0:
-            print("Aucun item renvoyé par Apify")
+            print("Aucune pub renvoyée par Meta Ad Library")
             return []
 
-        products = []
-        seen_authors = set()
+        ads = []
+        seen_pages = set()
 
         for item in items:
-            author = item.get("authorMeta", {}).get("name", "").lower()
-            text = (item.get("text") or item.get("desc") or "").lower()
-            bio_link = item.get("authorMeta", {}).get("bioLink", "")
+            page_name = item.get("pageName", "Page Inconnue")
+            ad_text = item.get("adBody") or item.get("adTitle") or ""
+            text_lower = ad_text.lower()
             
-            # 1. Dédoublonnage
-            if author and author in seen_authors:
+            # 1. Dédoublonnage par page
+            if page_name in seen_pages:
                 continue
 
-            # 2. Exclure nourriture / services
-            if any(bad_word in text for bad_word in EXCLUDE_WORDS):
+            # 2. Filtre d'exclusion (nourriture, services, etc.)
+            if any(bad_word in text_lower for bad_word in EXCLUDE_WORDS):
                 continue
 
-            # 3. FILTRE GEOLOCALISATION (Algérie)
-            is_dz = any(dz_word in text for dz_word in DZ_INDICATORS)
-            if not is_dz:
-                continue
-
-            # 4. FILTRE DATE (Moins de 2 mois)
-            create_time = item.get("createTime")
-            if not is_recent(create_time):
-                continue
-
-            # 5. FILTRE LANDING PAGE / SITE WEB
-            has_landing = bool(bio_link) or any(indicator in text for indicator in LANDING_TEXTS)
-            if not has_landing:
-                continue
-
-            # 6. FILTRE ENGAGEMENT ELEVE
-            digg_count = item.get("diggCount", 0)       # Likes
-            comment_count = item.get("commentCount", 0) # Commentaires
-            share_count = item.get("shareCount", 0)     # Partages
-            collect_count = item.get("collectCount", 0) # Enregistrements
-
-            has_high_engagement = (
-                digg_count >= MIN_LIKES or
-                comment_count >= MIN_COMMENTS or
-                collect_count >= MIN_SAVES or
-                share_count >= MIN_SHARES
-            )
-
-            if not has_high_engagement:
-                continue
-
-            # 7. Titre et URL
-            raw_title = item.get("text") or item.get("desc") or ""
-            title = raw_title.split("\n")[0][:65].strip()
+            # 3. Récupération de la Landing Page (Lien de destination du bouton)
+            link_url = item.get("linkUrl") or item.get("targetUrl") or ""
             
-            if len(title) < 5:
+            # Si pas de lien direct, on cherche un lien dans le texte de la pub
+            if not link_url and ("http" in text_lower or "www" in text_lower):
+                words = ad_text.split()
+                for w in words:
+                    if "http" in w or "www" in w:
+                        link_url = w
+                        break
+
+            # S'il n'y a aucun site / landing page, on passe
+            if not link_url:
                 continue
 
-            play_count = item.get("playCount", 0)
-            video_url = item.get("webVideoUrl") or f"https://www.tiktok.com/@{author}/video/{item.get('id', '')}"
-            landing_display = bio_link if bio_link else "Lien en Bio / Site Web"
+            # 4. Formater la pub
+            title = ad_text.split("\n")[0][:80].strip() if ad_text else "Publicité Produit DZ"
+            ad_id = item.get("adArchiveID") or item.get("id") or ""
+            fb_ad_url = f"https://www.facebook.com/ads/library/?id={ad_id}" if ad_id else ""
 
-            products.append({
-                "name": title,
-                "views": f"{play_count:,}".replace(",", " "),
-                "likes": f"{digg_count:,}".replace(",", " "),
-                "comments": f"{comment_count:,}".replace(",", " "),
-                "shares": f"{share_count:,}".replace(",", " "),
-                "saves": f"{collect_count:,}".replace(",", " "),
-                "url": video_url,
-                "landing": landing_display
+            ads.append({
+                "page": page_name,
+                "title": title,
+                "landing": link_url,
+                "fb_url": fb_ad_url
             })
 
-            if author:
-                seen_authors.add(author)
+            seen_pages.add(page_name)
 
-            if len(products) >= NB_PAR_ENVOI:
+            if len(ads) >= NB_PAR_ENVOI:
                 break
 
-        return products
+        return ads
 
     except Exception as e:
-        print(f"Exception Apify : {e}")
+        print(f"Exception Apify Facebook Ads : {e}")
         return []
 
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Lancement du scan des Ads Winners DZ...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan de Facebook Ads Library (Algérie)...</b>")
     
-    prods = fetch_apify_winner_products()
+    ads = fetch_facebook_ads()
     
-    if not prods:
-        send_telegram("⚠️ <i>Aucun produit validant l'intégralité des filtres stricts (>5k likes, DZ, <2 mois, landing page) trouvé sur ce scan. Réessai au prochain passage !</i>")
+    if not ads:
+        send_telegram("⚠️ <i>Aucune nouvelle pub Facebook DZ avec Landing Page trouvée sur ce passage. Prochain essai au prochain cycle !</i>")
         return
 
-    send_telegram("🔥 <b>Top Ads Winners E-Commerce DZ (Avec Landing Page)</b> 🔥")
+    send_telegram("🔥 <b>Top Ads Winners Facebook E-Commerce DZ</b> 🔥")
     time.sleep(1)
 
-    for idx, item in enumerate(prods, 1):
-        msg = f"🏆 <b>WINNER DZ #{idx}</b>\n\n"
-        msg += f"📦 <b>Produit :</b> {item['name']}\n"
-        msg += f"🌐 <b>Landing Page / Site :</b> {item['landing']}\n\n"
-        msg += "📊 <b>Performance Ad :</b>\n"
-        msg += f"• 👁️ Vues : {item['views']}\n"
-        msg += f"• ❤️ J'aime : {item['likes']}\n"
-        msg += f"• 💬 Commentaires : {item['comments']}\n"
-        msg += f"• 🔖 Enregistrements : {item['saves']}\n"
-        msg += f"• 🔁 Partages : {item['shares']}\n"
+    for idx, item in enumerate(ads, 1):
+        msg = f"🏆 <b>WINNER FB DZ #{idx}</b>\n\n"
+        msg += f"📢 <b>Page Facebook :</b> {item['page']}\n"
+        msg += f"📦 <b>Aperçu Pub :</b> {item['title']}\n\n"
+        msg += f"🌐 <b>Landing Page (Site Web) :</b> {item['landing']}\n"
         
-        if item['url']:
-            msg += f"\n🎬 <a href=\"{item['url']}\">Voir la vidéo de la pub TikTok</a>"
+        if item['fb_url']:
+            msg += f"\n🔗 <a href=\"{item['fb_url']}\">Voir la pub dans la Meta Ad Library</a>"
 
         send_telegram(msg)
         time.sleep(1)
