@@ -1,29 +1,27 @@
 import json
 import os
 import time
-import urllib.parse
 import requests
 
 # --- CONFIGURATION API & BOT ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-# Nouveau token Apify intégré par défaut
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_NHjmiStXhLV8j9cCkGn7QLqEMKwqEc0W7tuw")
 
 NB_PAR_ENVOI = 5
 
-# Mots-clés très variés (Mode, Gadgets, Maison, High-Tech)
 KEYWORDS_VARIES = [
+    "livraison 58 wilayas",
+    "commander algerie",
+    "produit algerie",
+    "boutique algerie",
     "pantalon homme algerie 58 wilayas",
     "mini aspirateur portable algerie",
     "imprimante portable algerie",
     "gourde motivante algerie",
-    "produit utile algerie commande site",
-    "gadget maison algerie livraison",
-    "accessoire pratique algerie site web"
+    "gadget maison algerie livraison"
 ]
 
-# Exclusions strictes (Nourriture, Restos, Services locaux, Cosmétiques 100% femme)
 EXCLUDE_WORDS = [
     "bento", "cake", "cookie", "gateau", "patisserie", "brownie", "sweet",
     "food", "chocolat", "manger", "restaurant", "fast food", "snack",
@@ -31,17 +29,11 @@ EXCLUDE_WORDS = [
     "maquillage", "makeup", "robe", "abaya", "hijab", "talons", "epilation"
 ]
 
-# Indicateurs de présence d'une Landing Page / Site Web
-LANDING_INDICATORS = [
-    "lien en bio", "link in bio", "site web", "commandez sur notre site",
-    "lien dans la bio", "sur le site", ".com", ".dz", "store", "shop"
-]
-
-# --- SEUILS MINIMAUX D'ENGAGEMENT ---
-MIN_LIKES = 5000
-MIN_COMMENTS = 500
-MIN_SAVES = 500
-MIN_SHARES = 300
+# --- SEUILS D'ENGAGEMENT (Au moins UN critère rempli) ---
+MIN_LIKES = 5000       # 5 000 J'aime minimum
+MIN_COMMENTS = 500      # OU 500 Commentaires
+MIN_SHARES = 500        # OU 500 Partages
+MIN_SAVES = 300         # OU 300 Enregistrements
 
 def send_telegram(text):
     """Envoie un message textuel à Telegram"""
@@ -58,19 +50,19 @@ def send_telegram(text):
         print(f"Erreur envoi Telegram : {e}")
 
 def fetch_apify_winner_products():
-    """Scrape TikTok pour trouver des produits variés avec Landing Page + Gros Engagement"""
+    """Scrape TikTok et filtre si AU MOINS UN critère d'engagement est atteint"""
     print("Recherche de produits winners DZ avec filtres d'engagement...")
     
     url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
     payload = {
         "searchQueries": KEYWORDS_VARIES,
-        "resultsPerPage": 35,
+        "resultsPerPage": 50,
         "searchType": "video"
     }
 
     try:
-        res = requests.post(url, json=payload, timeout=50)
+        res = requests.post(url, json=payload, timeout=90)
         if res.status_code not in [200, 201]:
             print(f"Erreur Apify status code : {res.status_code}")
             return []
@@ -90,38 +82,31 @@ def fetch_apify_winner_products():
             if author and author in seen_authors:
                 continue
 
-            # 2. Exclure la nourriture / services / makeup
+            # 2. Exclusions
             if any(bad_word in text for bad_word in EXCLUDE_WORDS):
                 continue
 
-            # 3. Vérifier la présence d'une Landing Page / Site Web
-            has_landing = any(indicator in text for indicator in LANDING_INDICATORS) or item.get("authorMeta", {}).get("bioLink")
-            if not has_landing:
-                continue
-
-            # 4. Récupération des métriques d'engagement
+            # 3. Récupération des métriques d'engagement
             digg_count = item.get("diggCount", 0)       # Likes
             comment_count = item.get("commentCount", 0) # Commentaires
             share_count = item.get("shareCount", 0)     # Partages
             collect_count = item.get("collectCount", 0) # Enregistrements / Favoris
 
-            # 5. Validation d'au moins UN critère d'engagement élevé
-            has_high_engagement = (
+            # 4. Condition OU : AU MOINS UN critère validé
+            has_winner_metrics = (
                 digg_count >= MIN_LIKES or
                 comment_count >= MIN_COMMENTS or
-                collect_count >= MIN_SAVES or
-                share_count >= MIN_SHARES
+                share_count >= MIN_SHARES or
+                collect_count >= MIN_SAVES
             )
 
-            if not has_high_engagement:
+            if not has_winner_metrics:
                 continue
 
-            # 6. Traiter le titre
             raw_title = item.get("text") or item.get("desc") or ""
-            title = raw_title.split("\n")[0][:65].strip()
-            
-            if len(title) < 5:
-                continue
+            title = raw_title.split("\n")[0][:70].strip()
+            if len(title) < 3:
+                title = f"Produit E-commerce DZ (@{author})"
 
             play_count = item.get("playCount", 0)
             video_url = item.get("webVideoUrl") or f"https://www.tiktok.com/@{author}/video/{item.get('id', '')}"
@@ -135,7 +120,7 @@ def fetch_apify_winner_products():
                 "shares": f"{share_count:,}".replace(",", " "),
                 "saves": f"{collect_count:,}".replace(",", " "),
                 "url": video_url,
-                "landing": bio_link if bio_link else "Lien en Bio TikTok"
+                "landing": bio_link if bio_link else "Lien en Bio TikTok / Contact Direct"
             })
 
             if author:
@@ -151,24 +136,24 @@ def fetch_apify_winner_products():
         return []
 
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Filtrage des annonces avec gros engagement...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan des vidéos à fort engagement...</b>")
     
     prods = fetch_apify_winner_products()
     
     if not prods:
-        send_telegram("⚠️ <i>Aucun produit validant les critères d'engagement élevés (>5k likes, >500 coms, etc.) trouvé lors de ce scan. Réessai au prochain run.</i>")
+        send_telegram("⚠️ <i>Aucun produit validant au moins un des critères (>5k likes, >500 coms, >500 partages ou >300 enregistrements) trouvé lors de ce passage.</i>")
         return
 
-    send_telegram("🔥 <b>Top Produits E-commerce High-Engagement (Landing Page DZ)</b> 🔥")
+    send_telegram("🔥 <b>Top Produits E-commerce High-Engagement DZ</b> 🔥")
     time.sleep(1)
 
     for idx, item in enumerate(prods, 1):
         msg = f"🏆 <b>WINNER DZ #{idx}</b>\n\n"
         msg += f"📦 <b>Produit :</b> {item['name']}\n"
-        msg += f"🌐 <b>Site / Landing :</b> {item['landing']}\n\n"
+        msg += f"🌐 <b>Site / Bio :</b> {item['landing']}\n\n"
         msg += "📊 <b>Engagement Détecté :</b>\n"
         msg += f"• 👁️ Vues : {item['views']}\n"
-        msg += f"• ❤️ J'aime : {item['likes']}\n"
+        msg += f"• ❤️️ Likes : {item['likes']}\n"
         msg += f"• 💬 Commentaires : {item['comments']}\n"
         msg += f"• 🔖 Enregistrements : {item['saves']}\n"
         msg += f"• 🔁 Partages : {item['shares']}\n"
