@@ -1,128 +1,111 @@
 import os
-import sys
-import logging
 import requests
 from apify_client import ApifyClient
 
-# Configuration des logs
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-# Récupération des secrets depuis les variables d'environnement
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# 1. Configuration des variables d'environnement (GitHub Secrets / Local)
 APIFY_TOKEN = os.getenv("APIFY_TOKEN")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-def verify_credentials():
-    """Vérifie que tous les secrets requis sont bien configurés."""
-    missing = []
-    if not TELEGRAM_TOKEN:
-        missing.append("TELEGRAM_TOKEN")
-    if not CHAT_ID:
-        missing.append("CHAT_ID")
-    if not APIFY_TOKEN:
-        missing.append("APIFY_TOKEN")
-        
-    if missing:
-        logging.error(f"❌ ERREUR : Variable(s) manquante(s) dans l'environnement : {', '.join(missing)}")
-        sys.exit(1)
-        
-    logging.info("✅ Tous les secrets (Telegram & Apify) sont détectés avec succès.")
+# Validation des accès
+if not all([APIFY_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+    raise ValueError("Erreur: Les variables d'environnement ne sont pas correctement configurées.")
 
-def send_telegram_message(message: str) -> bool:
-    """Envoie un message formaté en HTML via l'API Telegram."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"  # Emploi de HTML pour éviter les erreurs de caractères spéciaux
-    }
+# Initialisation du client Apify
+apify_client = ApifyClient(APIFY_TOKEN)
+
+
+def send_telegram_message(bot_token, chat_id, text, image_url=None):
+    """Envoie un message ou une photo avec légende à Telegram."""
+    if image_url:
+        url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+        payload = {
+            "chat_id": chat_id,
+            "photo": image_url,
+            "caption": text,
+            "parse_mode": "HTML"
+        }
+    else:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": False
+        }
     
     try:
         response = requests.post(url, json=payload, timeout=10)
-        result = response.json()
-        
-        if response.status_code == 200 and result.get("ok"):
-            logging.info("🚀 Message envoyé sur Telegram avec succès !")
-            return True
-        else:
-            logging.error(f"❌ Échec de l'envoi Telegram : {result}")
-            return False
-            
+        response.raise_for_status()
     except Exception as e:
-        logging.error(f"❌ Erreur de connexion avec l'API Telegram : {e}")
+        print(f"[ERROR] Échec de l'envoi Telegram : {e}")
+
+
+def filter_product(item):
+    """Filtre les publicités selon les mots-clés e-commerce et exclut les services/nourriture."""
+    title = str(item.get("title", "")).lower()
+    description = str(item.get("body", "") or item.get("description", "")).lower()
+    text = f"{title} {description}"
+
+    # Mots-clés requis pour l'Algérie / E-commerce
+    keywords = ["livraison", "commande", "prix", "da", "dz", "promo", "vente", "commander", "boutique"]
+    
+    # Mots à exclure (Services, fast-food, etc.)
+    exclusions = ["restaurant", "pizza", "burger", "coiffure", "salon", "formation", "recrutement"]
+
+    # Vérification des exclusions
+    if any(ex in text for ex in exclusions):
         return False
 
-def get_winning_products():
-    """Récupère les produits gagnants via un Actor Apify."""
-    logging.info("🔍 Lancement du scraping sur Apify...")
-    
-    client = ApifyClient(APIFY_TOKEN)
-    
-    # Remplacez "apify/web-scraper" par l'ID exact de l'Actor que vous utilisez sur Apify
-    actor_id = "apify/web-scraper"
-    
-    # Adaptez `run_input` aux paramètres requis par votre Actor Apify
+    # Vérification de la présence d'au moins un mot-clé
+    if any(kw in text for kw in keywords):
+        return True
+
+    return False
+
+
+def run_tiktok_scraper():
+    print("[INFO] Lancement du scraping TikTok via Apify...")
+
+    # Paramètres de l'Actor TikTok Creative Center / TikTok Ads Scraper sur Apify
     run_input = {
-        "maxItems": 5,
-        # "search": "winning products",
+        "countryCode": "DZ",
+        "maxItems": 20,
+        "period": 7  # Publicités actives ces 7 derniers jours
     }
-    
+
     try:
-        # Exécution de l'Actor
-        run = client.actor(actor_id).call(run_input=run_input)
+        # Exécution de l'Actor Apify (clockworks/tiktok-ads-scraper ou similaire)
+        run = apify_client.actor("clockworks/free-tiktok-ads-scraper").call(run_input=run_input)
+        dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
         
-        produits = []
-        # Parcours du Dataset de résultats généré par Apify
-        dataset_items = client.dataset(run["defaultDatasetId"]).iterate_items()
-        
+        print(f"[INFO] {len(dataset_items)} éléments récupérés depuis Apify.")
+
+        count = 0
         for item in dataset_items:
-            # Adaptez ces clés aux champs réels retournés par votre Actor Apify
-            nom = item.get("title") or item.get("name") or "Produit sans nom"
-            prix = item.get("price") or item.get("priceText") or "N/A"
-            lien = item.get("url") or item.get("link") or "#"
-            
-            produits.append({
-                "nom": nom,
-                "prix": str(prix),
-                "lien": lien
-            })
-            
-        return produits
+            if filter_product(item):
+                ad_title = item.get("title") or "Produit sans titre"
+                ad_url = item.get("link") or item.get("videoUrl") or "Lien indisponible"
+                brand_name = item.get("brandName") or "Marque / Annonceur"
+                cover_image = item.get("coverUrl") or item.get("image")
+
+                # Formatage du message Telegram
+                message = (
+                    f"🔥 <b>Nouveau Produit Winner TikTok !</b>\n\n"
+                    f"📌 <b>Produit / Titre :</b> {ad_title}\n"
+                    f"🏢 <b>Annonceur :</b> {brand_name}\n"
+                    f"🔗 <b>Lien :</b> {ad_url}\n\n"
+                    f"🇩🇿 <i>Cible : Algérie</i>"
+                )
+
+                send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, message, cover_image)
+                count += 1
+
+        print(f"[SUCCESS] {count} produits envoyés sur Telegram avec succès.")
 
     except Exception as e:
-        logging.error(f"❌ Erreur lors de la récupération des données Apify : {e}")
-        return []
+        print(f"[ERROR] Une erreur est survenue pendant le traitement TikTok : {e}")
 
-def main():
-    logging.info("=== DÉMARRAGE DU BOT WINNERBOTDZ ===")
-    
-    # 1. Vérification des identifiants
-    verify_credentials()
-    
-    # 2. Récupération des produits depuis Apify
-    produits = get_winning_products()
-    
-    if not produits:
-        logging.info("ℹ️ Aucun produit trouvé lors de cette exécution.")
-        send_telegram_message("🔎 <b>WinnerBotDZ</b> : Exécution terminée, aucun nouveau produit détecté.")
-        return
-
-    # 3. Traitement et envoi des notifications
-    logging.info(f"📦 {len(produits)} produit(s) trouvé(s). Envoi de la notification...")
-    
-    for prod in produits:
-        msg = (
-            f"🔥 <b>Nouveau Produit Winner Détecté !</b>\n\n"
-            f"📌 <b>Nom</b> : {prod['nom']}\n"
-            f"💰 <b>Prix</b> : {prod['prix']}\n"
-            f"🔗 <a href=\"{prod['lien']}\">Voir le produit</a>"
-        )
-        send_telegram_message(msg)
-
-    logging.info("=== FIN DE L'EXÉCUTION ===")
 
 if __name__ == "__main__":
-    main()
+    run_tiktok_scraper()
