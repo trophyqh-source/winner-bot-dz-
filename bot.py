@@ -12,15 +12,15 @@ APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_eSD9fRMu37Y6Vrf2Dyn4bFIhI
 NB_PAR_ENVOI = 5
 MAX_DAYS_OLD = 60  # Maximum 2 mois (60 jours)
 
-# Mots-clés de recherche très variés (Algérie + E-commerce)
+# Mots-clés de recherche élargis (E-commerce DZ)
 KEYWORDS_VARIES = [
-    "pantalon homme algerie 58 wilayas",
-    "mini aspirateur portable algerie livraison",
-    "imprimante portable algerie site",
-    "gourde motivante algerie commande site",
-    "produit utile algerie 58 wilayas site web",
-    "gadget maison algerie commande lien bio",
-    "accessoire pratique algerie livraison domicile"
+    "algerie 58 wilayas livraison",
+    "commande site web algerie",
+    "produit utile algerie",
+    "boutique algerie livraison",
+    "promo algerie livraison domicile",
+    "gadget algerie 58 wilayas",
+    "vetement homme algerie livraison"
 ]
 
 # Exclusions strictes (Nourriture, Services locaux, Cosmétiques 100% femme)
@@ -32,11 +32,10 @@ EXCLUDE_WORDS = [
 ]
 
 # Indicateurs stricts Algérie
-DZ_INDICATORS = ["algerie", "alger", "dz", "58 wilayas", "58 wilaya", "wilaya", "dinars", "da"]
+DZ_INDICATORS = ["algerie", "alger", "dz", "58 wilayas", "58 wilaya", "wilaya", "dinars", "da", "livraison"]
 
-# Indicateurs de présence d'une Landing Page / Site Web de commande
-LANDING_DOMAINS = [".com", ".dz", ".shop", ".store", ".site", "youcan", "shopify", "dropify", "coot"]
-LANDING_TEXTS = ["lien en bio", "link in bio", "commandez sur le site", "lien dans la bio", "sur le site"]
+# Indicateurs de vente / Landing Page
+LANDING_TEXTS = ["lien", "bio", "site", "commandez", "commande", "boutique", "store", "shop", "http", "www", ".com", ".dz"]
 
 # --- SEUILS MINIMAUX D'ENGAGEMENT ---
 MIN_LIKES = 5000
@@ -53,12 +52,15 @@ def send_telegram(text):
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
-    requests.post(url, json=payload, timeout=30)
+    try:
+        requests.post(url, json=payload, timeout=30)
+    except Exception as e:
+        print(f"Erreur envoi Telegram: {e}")
 
 def is_recent(create_time):
     """Vérifie si la vidéo a moins de 60 jours (2 mois)"""
     if not create_time:
-        return True  # Par sécurité si l'API ne renvoie pas la date
+        return True
     try:
         video_date = datetime.fromtimestamp(create_time)
         return video_date >= (datetime.now() - timedelta(days=MAX_DAYS_OLD))
@@ -73,7 +75,7 @@ def fetch_apify_winner_products():
 
     payload = {
         "searchQueries": KEYWORDS_VARIES,
-        "resultsPerPage": 40,
+        "resultsPerPage": 50,
         "searchType": "video"
     }
 
@@ -85,6 +87,7 @@ def fetch_apify_winner_products():
 
         items = res.json()
         if not isinstance(items, list) or len(items) == 0:
+            print("Aucun item renvoyé par Apify")
             return []
 
         products = []
@@ -95,36 +98,34 @@ def fetch_apify_winner_products():
             text = (item.get("text") or item.get("desc") or "").lower()
             bio_link = item.get("authorMeta", {}).get("bioLink", "")
             
-            # 1. Dédoublonnage des comptes
+            # 1. Dédoublonnage
             if author and author in seen_authors:
                 continue
 
-            # 2. Exclure la nourriture / services / makeup
+            # 2. Exclure nourriture / services
             if any(bad_word in text for bad_word in EXCLUDE_WORDS):
                 continue
 
-            # 3. FILTRE GEOLOCALISATION : Strictement Algérie
+            # 3. FILTRE GEOLOCALISATION (Algérie)
             is_dz = any(dz_word in text for dz_word in DZ_INDICATORS)
             if not is_dz:
                 continue
 
-            # 4. FILTRE DATE : Maximum 2 mois (60 jours)
+            # 4. FILTRE DATE (Moins de 2 mois)
             create_time = item.get("createTime")
             if not is_recent(create_time):
                 continue
 
-            # 5. FILTRE LANDING PAGE / SITE WEB OBLIGATOIRE
-            has_landing_link = bool(bio_link and any(dom in bio_link.lower() for dom in LANDING_DOMAINS))
-            has_landing_mention = any(indicator in text for indicator in LANDING_TEXTS)
-            
-            if not (has_landing_link or has_landing_mention):
+            # 5. FILTRE LANDING PAGE / SITE WEB
+            has_landing = bool(bio_link) or any(indicator in text for indicator in LANDING_TEXTS)
+            if not has_landing:
                 continue
 
             # 6. FILTRE ENGAGEMENT ELEVE
             digg_count = item.get("diggCount", 0)       # Likes
             comment_count = item.get("commentCount", 0) # Commentaires
             share_count = item.get("shareCount", 0)     # Partages
-            collect_count = item.get("collectCount", 0) # Enregistrements / Favoris
+            collect_count = item.get("collectCount", 0) # Enregistrements
 
             has_high_engagement = (
                 digg_count >= MIN_LIKES or
@@ -171,12 +172,12 @@ def fetch_apify_winner_products():
         return []
 
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Verification des Ads DZ + Landing Page (<2 mois)...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Lancement du scan des Ads Winners DZ...</b>")
     
     prods = fetch_apify_winner_products()
     
     if not prods:
-        send_telegram("⚠️ <i>Aucun produit 100% DZ avec Landing Page (<2 mois) et gros engagement trouvé sur ce passage. Réessai automatique au prochain run.</i>")
+        send_telegram("⚠️ <i>Aucun produit validant l'intégralité des filtres stricts (>5k likes, DZ, <2 mois, landing page) trouvé sur ce scan. Réessai au prochain passage !</i>")
         return
 
     send_telegram("🔥 <b>Top Ads Winners E-Commerce DZ (Avec Landing Page)</b> 🔥")
