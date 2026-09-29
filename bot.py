@@ -7,7 +7,8 @@ import requests
 # --- CONFIGURATION API & BOT ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_eSD9fRMu37Y6Vrf2Dyn4bFIhIVRKYE1fD8h1")
+# Nouveau token Apify intégré par défaut
+APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_NHjmiStXhLV8j9cCkGn7QLqEMKwqEc0W7tuw")
 
 NB_PAR_ENVOI = 5
 
@@ -51,7 +52,10 @@ def send_telegram(text):
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
-    requests.post(url, json=payload, timeout=30)
+    try:
+        requests.post(url, json=payload, timeout=30)
+    except Exception as e:
+        print(f"Erreur envoi Telegram : {e}")
 
 def fetch_apify_winner_products():
     """Scrape TikTok pour trouver des produits variés avec Landing Page + Gros Engagement"""
