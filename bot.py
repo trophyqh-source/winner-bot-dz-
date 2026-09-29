@@ -2,14 +2,14 @@ import os
 import requests
 from apify_client import ApifyClient
 
-# 1. Configuration des variables d'environnement (GitHub Secrets / Local)
+# 1. Configuration des variables d'environnement (GitHub Secrets)
 APIFY_TOKEN = os.getenv("APIFY_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # Validation des accès
 if not all([APIFY_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
-    raise ValueError("Erreur: Les variables d'environnement ne sont pas correctement configurées.")
+    raise ValueError("Erreur: Les variables d'environnement (APIFY_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) ne sont pas définies.")
 
 # Initialisation du client Apify
 apify_client = ApifyClient(APIFY_TOKEN)
@@ -67,7 +67,7 @@ def filter_product(item):
 def run_tiktok_scraper():
     print("[INFO] Lancement du scraping TikTok via Apify...")
 
-    # Paramètres de l'Actor TikTok Creative Center / TikTok Ads Scraper sur Apify
+    # Paramètres transmis à l'Actor Apify
     run_input = {
         "countryCode": "DZ",
         "maxItems": 20,
@@ -75,8 +75,8 @@ def run_tiktok_scraper():
     }
 
     try:
-        # Exécution de l'Actor Apify (clockworks/tiktok-ads-scraper ou similaire)
-        run = apify_client.actor("clockworks/free-tiktok-ads-scraper").call(run_input=run_input)
+        # Utilisation de l'Actor officiel TikTok Ads Scraper sur Apify
+        run = apify_client.actor("clockworks/tiktok-ads-scraper").call(run_input=run_input)
         dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
         
         print(f"[INFO] {len(dataset_items)} éléments récupérés depuis Apify.")
