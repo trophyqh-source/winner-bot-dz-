@@ -1,4 +1,4 @@
-import json
+ import json
 import os
 import time
 import urllib.parse
@@ -11,7 +11,7 @@ APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_eSD9fRMu37Y6Vrf2Dyn4bFIhI
 
 NB_PAR_ENVOI = 5
 
-# Mots-clés très variés (Mode, Gadgets, Maison, Tech)
+# Mots-clés très variés (Mode, Gadgets, Maison, High-Tech)
 KEYWORDS_VARIES = [
     "pantalon homme algerie 58 wilayas",
     "mini aspirateur portable algerie",
@@ -36,6 +36,12 @@ LANDING_INDICATORS = [
     "lien dans la bio", "sur le site", ".com", ".dz", "store", "shop"
 ]
 
+# --- SEUILS MINIMAUX D'ENGAGEMENT ---
+MIN_LIKES = 5000
+MIN_COMMENTS = 500
+MIN_SAVES = 500
+MIN_SHARES = 300
+
 def send_telegram(text):
     """Envoie un message textuel à Telegram"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -47,15 +53,15 @@ def send_telegram(text):
     }
     requests.post(url, json=payload, timeout=30)
 
-def fetch_apify_varied_landing_products():
-    """Scrape TikTok pour trouver des produits variés AVEC Landing Page / Site Web"""
-    print("Recherche de produits variés avec Landing Page DZ...")
+def fetch_apify_winner_products():
+    """Scrape TikTok pour trouver des produits variés avec Landing Page + Gros Engagement"""
+    print("Recherche de produits winners DZ avec filtres d'engagement...")
     
     url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
     payload = {
         "searchQueries": KEYWORDS_VARIES,
-        "resultsPerPage": 30,
+        "resultsPerPage": 35,
         "searchType": "video"
     }
 
@@ -84,14 +90,29 @@ def fetch_apify_varied_landing_products():
             if any(bad_word in text for bad_word in EXCLUDE_WORDS):
                 continue
 
-            # 3. Vérifier la présence d'une Landing Page / Site Web (ou lien en bio)
+            # 3. Vérifier la présence d'une Landing Page / Site Web
             has_landing = any(indicator in text for indicator in LANDING_INDICATORS) or item.get("authorMeta", {}).get("bioLink")
-            
-            # Si aucune trace de landing page/site web, on passe
             if not has_landing:
                 continue
 
-            # 4. Traiter le titre
+            # 4. Récupération des métriques d'engagement
+            digg_count = item.get("diggCount", 0)       # Likes
+            comment_count = item.get("commentCount", 0) # Commentaires
+            share_count = item.get("shareCount", 0)     # Partages
+            collect_count = item.get("collectCount", 0) # Enregistrements / Favoris
+
+            # 5. Validation d'au moins UN critère d'engagement élevé
+            has_high_engagement = (
+                digg_count >= MIN_LIKES or
+                comment_count >= MIN_COMMENTS or
+                collect_count >= MIN_SAVES or
+                share_count >= MIN_SHARES
+            )
+
+            if not has_high_engagement:
+                continue
+
+            # 6. Traiter le titre
             raw_title = item.get("text") or item.get("desc") or ""
             title = raw_title.split("\n")[0][:65].strip()
             
@@ -99,7 +120,6 @@ def fetch_apify_varied_landing_products():
                 continue
 
             play_count = item.get("playCount", 0)
-            digg_count = item.get("diggCount", 0)
             video_url = item.get("webVideoUrl") or f"https://www.tiktok.com/@{author}/video/{item.get('id', '')}"
             bio_link = item.get("authorMeta", {}).get("bioLink", "")
 
@@ -107,6 +127,9 @@ def fetch_apify_varied_landing_products():
                 "name": title,
                 "views": f"{play_count:,}".replace(",", " "),
                 "likes": f"{digg_count:,}".replace(",", " "),
+                "comments": f"{comment_count:,}".replace(",", " "),
+                "shares": f"{share_count:,}".replace(",", " "),
+                "saves": f"{collect_count:,}".replace(",", " "),
                 "url": video_url,
                 "landing": bio_link if bio_link else "Lien en Bio TikTok"
             })
@@ -124,23 +147,27 @@ def fetch_apify_varied_landing_products():
         return []
 
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Filtrage Produits Variés + Landing Page...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Filtrage des annonces avec gros engagement...</b>")
     
-    prods = fetch_apify_varied_landing_products()
+    prods = fetch_apify_winner_products()
     
     if not prods:
-        send_telegram("⚠️ <i>Aucun produit avec Landing Page trouvé lors de ce passage. Réessai automatique au prochain run.</i>")
+        send_telegram("⚠️ <i>Aucun produit validant les critères d'engagement élevés (>5k likes, >500 coms, etc.) trouvé lors de ce scan. Réessai au prochain run.</i>")
         return
 
-    send_telegram("🔥 <b>Top Produits E-commerce Variés (Avec Landing Page)</b> 🔥")
+    send_telegram("🔥 <b>Top Produits E-commerce High-Engagement (Landing Page DZ)</b> 🔥")
     time.sleep(1)
 
     for idx, item in enumerate(prods, 1):
         msg = f"🏆 <b>WINNER DZ #{idx}</b>\n\n"
         msg += f"📦 <b>Produit :</b> {item['name']}\n"
-        msg += f"🌐 <b>Site / Landing :</b> {item['landing']}\n"
-        msg += f"👁️ <b>Vues :</b> {item['views']}\n"
-        msg += f"❤️ <b>J'aime :</b> {item['likes']}\n"
+        msg += f"🌐 <b>Site / Landing :</b> {item['landing']}\n\n"
+        msg += "📊 <b>Engagement Détecté :</b>\n"
+        msg += f"• 👁️ Vues : {item['views']}\n"
+        msg += f"• ❤️ J'aime : {item['likes']}\n"
+        msg += f"• 💬 Commentaires : {item['comments']}\n"
+        msg += f"• 🔖 Enregistrements : {item['saves']}\n"
+        msg += f"• 🔁 Partages : {item['shares']}\n"
         
         if item['url']:
             msg += f"\n🎬 <a href=\"{item['url']}\">Voir la vidéo sur TikTok</a>"
