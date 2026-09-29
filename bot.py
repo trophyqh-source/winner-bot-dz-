@@ -7,11 +7,9 @@ APIFY_TOKEN = os.getenv("APIFY_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Validation des accès
 if not all([APIFY_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
-    raise ValueError("Erreur: Les variables d'environnement (APIFY_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) ne sont pas définies.")
+    raise ValueError("Erreur : Les variables d'environnement (APIFY_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) sont manquantes.")
 
-# Initialisation du client Apify
 apify_client = ApifyClient(APIFY_TOKEN)
 
 
@@ -35,74 +33,61 @@ def send_telegram_message(bot_token, chat_id, text, image_url=None):
         }
     
     try:
-        response = requests.post(url, json=payload, timeout=10)
-        response.raise_for_status()
+        res = requests.post(url, json=payload, timeout=10)
+        res.raise_for_status()
+        print(f"[TELEGRAM] Message envoyé avec succès (status {res.status_code}).")
     except Exception as e:
         print(f"[ERROR] Échec de l'envoi Telegram : {e}")
-
-
-def filter_product(item):
-    """Filtre les publicités selon les mots-clés e-commerce et exclut les services/nourriture."""
-    title = str(item.get("title", "")).lower()
-    description = str(item.get("body", "") or item.get("description", "")).lower()
-    text = f"{title} {description}"
-
-    # Mots-clés requis pour l'Algérie / E-commerce
-    keywords = ["livraison", "commande", "prix", "da", "dz", "promo", "vente", "commander", "boutique"]
-    
-    # Mots à exclure (Services, fast-food, etc.)
-    exclusions = ["restaurant", "pizza", "burger", "coiffure", "salon", "formation", "recrutement"]
-
-    # Vérification des exclusions
-    if any(ex in text for ex in exclusions):
-        return False
-
-    # Vérification de la présence d'au moins un mot-clé
-    if any(kw in text for kw in keywords):
-        return True
-
-    return False
 
 
 def run_tiktok_scraper():
     print("[INFO] Lancement du scraping rapide TikTok via Apify...")
 
-    # Paramètres ultra-rapides : 1 seul hashtag + 10 items max
+    # Paramètres ajustés pour éviter les blocages de hashtag
     run_input = {
-        "hashtags": ["dz"],
+        "searchKeywords": "dz",
         "countryCode": "DZ",
         "maxItems": 10,
-        "period": 7
+        "period": 30
     }
 
     try:
-        # Appel de l'Actor Apify
-        run = apify_client.actor("clockworks/tiktok-ads-scraper").call(run_input=run_input)
-        dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
+        # Lancement de l'Actor Apify
+        run_res = apify_client.actor("clockworks/tiktok-ads-scraper").call(run_input=run_input)
         
+        # Récupération sécurisée du defaultDatasetId (compatible dictionnaire ou objet)
+        dataset_id = run_res.get("defaultDatasetId") if isinstance(run_res, dict) else getattr(run_res, "default_dataset_id", run_res.get("defaultDatasetId", None))
+        
+        if not dataset_id:
+            print("[ERROR] Impossible de récupérer l'identifiant du dataset Apify.")
+            return
+
+        dataset_items = apify_client.dataset(dataset_id).list_items().items
         print(f"[INFO] {len(dataset_items)} éléments récupérés depuis Apify.")
+
+        if not dataset_items:
+            print("[WARNING] Aucun résultat renvoyé par Apify pour ces critères.")
+            return
 
         count = 0
         for item in dataset_items:
-            if filter_product(item):
-                ad_title = item.get("title") or "Produit sans titre"
-                ad_url = item.get("link") or item.get("videoUrl") or "Lien indisponible"
-                brand_name = item.get("brandName") or "Marque / Annonceur"
-                cover_image = item.get("coverUrl") or item.get("image")
+            ad_title = item.get("title") or item.get("adTitle") or "Produit TikTok DZ"
+            ad_url = item.get("link") or item.get("videoUrl") or item.get("targetUrl") or "Lien indisponible"
+            brand_name = item.get("brandName") or item.get("advertiserName") or "Annonceur"
+            cover_image = item.get("coverUrl") or item.get("imageUrl") or item.get("image")
 
-                # Formatage du message Telegram
-                message = (
-                    f"🔥 <b>Nouveau Produit Winner TikTok !</b>\n\n"
-                    f"📌 <b>Produit / Titre :</b> {ad_title}\n"
-                    f"🏢 <b>Annonceur :</b> {brand_name}\n"
-                    f"🔗 <b>Lien :</b> {ad_url}\n\n"
-                    f"🇩🇿 <i>Cible : Algérie</i>"
-                )
+            message = (
+                f"🔥 <b>Nouveau Produit Winner TikTok !</b>\n\n"
+                f"📌 <b>Titre :</b> {ad_title}\n"
+                f"🏢 <b>Annonceur :</b> {brand_name}\n"
+                f"🔗 <b>Lien :</b> {ad_url}\n\n"
+                f"🇩🇿 <i>Cible : Algérie</i>"
+            )
 
-                send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, message, cover_image)
-                count += 1
+            send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, message, cover_image)
+            count += 1
 
-        print(f"[SUCCESS] {count} produits envoyés sur Telegram avec succès.")
+        print(f"[SUCCESS] {count} produits envoyés sur Telegram.")
 
     except Exception as e:
         print(f"[ERROR] Une erreur est survenue pendant le traitement TikTok : {e}")
