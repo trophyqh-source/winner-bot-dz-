@@ -1,100 +1,150 @@
+import json
 import os
+import time
 import requests
-from apify_client import ApifyClient
+from datetime import datetime, timedelta
 
-# 1. Configuration des variables d'environnement (GitHub Secrets)
-APIFY_TOKEN = os.getenv("APIFY_TOKEN")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# --- CONFIGURATION API & BOT ---
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_eSD9fRMu37Y6Vrf2Dyn4bFIhIVRKYE1fD8h1")
 
-if not all([APIFY_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
-    raise ValueError("Erreur: Les variables d'environnement (APIFY_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) sont manquantes.")
+NB_PAR_ENVOI = 5
 
-apify_client = ApifyClient(APIFY_TOKEN)
+# Mots-clés E-Commerce DZ pour Facebook Ads
+KEYWORDS_FB = [
+    "58 wilayas livraison",
+    "commandez sur notre site",
+    "livraison a domicile algerie",
+    "prix choc algerie",
+    "pantalon homme algerie",
+    "accessoire maison algerie"
+]
 
+# Exclusions strictes (Nourriture, Services locaux, Cosmétiques 100% femme)
+EXCLUDE_WORDS = [
+    "bento", "cake", "cookie", "gateau", "patisserie", "brownie", "sweet",
+    "food", "chocolat", "manger", "restaurant", "fast food", "snack",
+    "salon", "coiffeur", "ongles", "location", "auto ecole",
+    "maquillage", "makeup", "robe", "abaya", "hijab", "talons", "epilation"
+]
 
-def send_telegram_message(bot_token, chat_id, text, image_url=None):
-    """Envoie une notification ou photo sur Telegram."""
-    if image_url:
-        url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
-        payload = {
-            "chat_id": chat_id,
-            "photo": image_url,
-            "caption": text,
-            "parse_mode": "HTML"
-        }
-    else:
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": False
-        }
-    
+def send_telegram(text):
+    """Envoie un message textuel à Telegram"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
     try:
-        res = requests.post(url, json=payload, timeout=10)
-        res.raise_for_status()
-        print(f"[TELEGRAM] Message envoyé (Code: {res.status_code})")
+        requests.post(url, json=payload, timeout=30)
     except Exception as e:
-        print(f"[ERROR] Échec de l'envoi Telegram : {e}")
+        print(f"Erreur envoi Telegram : {e}")
 
+def fetch_facebook_ads():
+    """Scrape la Meta Ad Library pour trouver des pubs E-commerce DZ avec Landing Page"""
+    print("Recherche de Facebook Ads Winners DZ...")
+    
+    # Utilisation de l'acteur Apify Facebook Ads Scraper
+    url = f"https://api.apify.com/v2/acts/apify~facebook-ads-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
-def run_tiktok_scraper():
-    print("[INFO] Lancement du scraping TikTok Ads via Apify...")
-
-    # Paramètres de recherche efficaces pour trouver des pubs en Algérie
-    run_input = {
-        "searchKeywords": "livraison algerie",
-        "hashtags": ["algerie", "dz", "ecom"],
-        "countryCode": "DZ",
-        "maxItems": 15,
-        "period": 30
+    payload = {
+        "searchTerms": KEYWORDS_FB,
+        "country": "DZ",
+        "adActiveStatus": "ACTIVE",
+        "resultsLimit": 30
     }
 
     try:
-        # Appel de l'Actor TikTok Ads Scraper sur Apify
-        run = apify_client.actor("clockworks/tiktok-ads-scraper").call(run_input=run_input)
-        
-        # Récupération sécurisée du Dataset ID
-        dataset_id = run.get("defaultDatasetId") if isinstance(run, dict) else run.default_dataset_id
-        dataset_items = apify_client.dataset(dataset_id).list_items().items
-        
-        print(f"[INFO] {len(dataset_items)} publicités récupérées depuis Apify.")
+        res = requests.post(url, json=payload, timeout=60)
+        if res.status_code not in [200, 201]:
+            print(f"Erreur Apify status code : {res.status_code}")
+            return []
 
-        if not dataset_items:
-            print("[WARNING] Aucune publicité trouvée sur cette session.")
-            send_telegram_message(
-                TELEGRAM_BOT_TOKEN, 
-                TELEGRAM_CHAT_ID, 
-                "⚠️ <b>WinnerBotDZ : Scan TikTok Ads</b>\n\nAucune pub TikTok valide trouvée sur ce passage. Relance automatique lors du prochain cycle."
-            )
-            return
+        items = res.json()
+        if not isinstance(items, list) or len(items) == 0:
+            print("Aucune pub renvoyée par Meta Ad Library")
+            return []
 
-        count = 0
-        for item in dataset_items:
-            ad_title = item.get("title") or item.get("adTitle") or "Produit Winner TikTok"
-            ad_url = item.get("link") or item.get("videoUrl") or item.get("targetUrl") or "Lien indisponible"
-            brand_name = item.get("brandName") or item.get("advertiserName") or "Annonceur DZ"
-            cover_image = item.get("coverUrl") or item.get("imageUrl") or item.get("image")
+        ads = []
+        seen_pages = set()
 
-            message = (
-                f"🇩🇿 <b>WinnerBotDZ : Scan TikTok Ads</b>\n\n"
-                f"🔥 <b>Nouveau Produit Winner TikTok !</b>\n\n"
-                f"📌 <b>Produit / Titre :</b> {ad_title}\n"
-                f"🏢 <b>Annonceur :</b> {brand_name}\n"
-                f"🔗 <b>Lien :</b> {ad_url}\n\n"
-                f"🇩🇿 <i>Cible : Algérie</i>"
-            )
+        for item in items:
+            page_name = item.get("pageName", "Page Inconnue")
+            ad_text = item.get("adBody") or item.get("adTitle") or ""
+            text_lower = ad_text.lower()
+            
+            # 1. Dédoublonnage par page
+            if page_name in seen_pages:
+                continue
 
-            send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, message, cover_image)
-            count += 1
+            # 2. Filtre d'exclusion (nourriture, services, etc.)
+            if any(bad_word in text_lower for bad_word in EXCLUDE_WORDS):
+                continue
 
-        print(f"[SUCCESS] {count} publicités envoyées sur Telegram.")
+            # 3. Récupération de la Landing Page (Lien de destination du bouton)
+            link_url = item.get("linkUrl") or item.get("targetUrl") or ""
+            
+            # Si pas de lien direct, on cherche un lien dans le texte de la pub
+            if not link_url and ("http" in text_lower or "www" in text_lower):
+                words = ad_text.split()
+                for w in words:
+                    if "http" in w or "www" in w:
+                        link_url = w
+                        break
+
+            # S'il n'y a aucun site / landing page, on passe
+            if not link_url:
+                continue
+
+            # 4. Formater la pub
+            title = ad_text.split("\n")[0][:80].strip() if ad_text else "Publicité Produit DZ"
+            ad_id = item.get("adArchiveID") or item.get("id") or ""
+            fb_ad_url = f"https://www.facebook.com/ads/library/?id={ad_id}" if ad_id else ""
+
+            ads.append({
+                "page": page_name,
+                "title": title,
+                "landing": link_url,
+                "fb_url": fb_ad_url
+            })
+
+            seen_pages.add(page_name)
+
+            if len(ads) >= NB_PAR_ENVOI:
+                break
+
+        return ads
 
     except Exception as e:
-        print(f"[ERROR] Une erreur est survenue pendant le traitement TikTok : {e}")
+        print(f"Exception Apify Facebook Ads : {e}")
+        return []
 
+def run_bot():
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan de Facebook Ads Library (Algérie)...</b>")
+    
+    ads = fetch_facebook_ads()
+    
+    if not ads:
+        send_telegram("⚠️ <i>Aucune nouvelle pub Facebook DZ avec Landing Page trouvée sur ce passage. Prochain essai au prochain cycle !</i>")
+        return
+
+    send_telegram("🔥 <b>Top Ads Winners Facebook E-Commerce DZ</b> 🔥")
+    time.sleep(1)
+
+    for idx, item in enumerate(ads, 1):
+        msg = f"🏆 <b>WINNER FB DZ #{idx}</b>\n\n"
+        msg += f"📢 <b>Page Facebook :</b> {item['page']}\n"
+        msg += f"📦 <b>Aperçu Pub :</b> {item['title']}\n\n"
+        msg += f"🌐 <b>Landing Page (Site Web) :</b> {item['landing']}\n"
+        
+        if item['fb_url']:
+            msg += f"\n🔗 <a href=\"{item['fb_url']}\">Voir la pub dans la Meta Ad Library</a>"
+
+        send_telegram(msg)
+        time.sleep(1)
 
 if __name__ == "__main__":
-    run_tiktok_scraper()
+    run_bot()
