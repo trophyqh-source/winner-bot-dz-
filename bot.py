@@ -65,14 +65,14 @@ def filter_product(item):
 
 
 def run_tiktok_scraper():
-    print("[INFO] Lancement du scraping TikTok via Apify...")
+    print("[INFO] Lancement du scraping rapide TikTok via Apify...")
 
-    # Paramètres d'entrée corrigés (hashtags obligatoires inclus)
+    # Paramètres ultra-rapides : 1 seul hashtag + 10 items max
     run_input = {
-        "hashtags": ["dz", "algerie", "ecom", "boutique", "livraison"],
+        "hashtags": ["dz"],
         "countryCode": "DZ",
-        "maxItems": 20,
-        "period": 7  # Publicités actives ces 7 derniers jours
+        "maxItems": 10,
+        "period": 7
     }
 
     try:
