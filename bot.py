@@ -67,15 +67,16 @@ def filter_product(item):
 def run_tiktok_scraper():
     print("[INFO] Lancement du scraping TikTok via Apify...")
 
-    # Paramètres transmis à l'Actor Apify
+    # Paramètres d'entrée corrigés (hashtags obligatoires inclus)
     run_input = {
+        "hashtags": ["dz", "algerie", "ecom", "boutique", "livraison"],
         "countryCode": "DZ",
         "maxItems": 20,
         "period": 7  # Publicités actives ces 7 derniers jours
     }
 
     try:
-        # Utilisation de l'Actor officiel TikTok Ads Scraper sur Apify
+        # Appel de l'Actor Apify
         run = apify_client.actor("clockworks/tiktok-ads-scraper").call(run_input=run_input)
         dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
         
