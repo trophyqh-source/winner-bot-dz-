@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import urllib.parse
 import requests
 
 # --- CONFIGURATION API & BOT ---
@@ -21,20 +22,22 @@ def send_telegram(text):
     }
     requests.post(url, json=payload, timeout=30)
 
-def fetch_apify_dz_ads():
-    """Scrape les pubs TikTok Ads ciblant spécifiquement l'Algérie (DZ)"""
-    print("Recherche des Ads TikTok Algérie via Apify...")
+def fetch_apify_dz_products():
+    """Scrape TikTok pour trouver les vidéos e-commerce ciblant l'Algérie"""
+    print("Recherche des produits DZ sur TikTok via Apify...")
     
-    # Scraper ciblé TikTok Ads Library
-    actor_id = "clockworks~tiktok-ads-scraper"
-    url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items?token={APIFY_TOKEN}"
+    url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
-    # Filtres ciblés : Pays DZ (Algérie), pubs actives (>= 7 jours)
+    # Mots-clés utilisés par les vendeurs e-commerce en Algérie
     payload = {
-        "countryCode": "DZ",          # Algérie
-        "period": "30",               # Ce mois-ci (30 derniers jours)
-        "minDaysActive": 7,           # Pubs qui tournent depuis au moins 7 jours
-        "limit": 10
+        "searchQueries": [
+            "livraison 58 wilayas",
+            "livraison gratuite algerie",
+            "produit algerie ecommerce",
+            "disponible en algerie"
+        ],
+        "resultsPerPage": 10,
+        "searchType": "video"
     }
 
     try:
@@ -45,22 +48,32 @@ def fetch_apify_dz_ads():
 
         items = res.json()
         if not isinstance(items, list) or len(items) == 0:
-            print("Aucune pub DZ trouvée avec ces critères.")
+            print("Aucun produit DZ trouvé.")
             return []
 
         products = []
-        for idx, item in enumerate(items[:NB_PAR_ENVOI], 1):
-            title = item.get("adTitle") or item.get("brandName") or item.get("text") or f"Produit Winner DZ #{idx}"
-            days_active = item.get("daysActive", "7+")
-            impressions = item.get("impressions", "Élevé")
-            ad_url = item.get("adUrl") or item.get("videoUrl") or ""
+        for item in items:
+            text = item.get("text") or item.get("desc") or ""
+            
+            # Filtrer pour ne garder que le contenu pertinent
+            title = text.split("\n")[0][:60]
+            if len(title) < 5:
+                continue
+
+            play_count = item.get("playCount", 0)
+            digg_count = item.get("diggCount", 0)
+            video_url = item.get("webVideoUrl") or f"https://www.tiktok.com/@{item.get('authorMeta', {}).get('name', '')}/video/{item.get('id', '')}"
 
             products.append({
-                "name": title.strip().replace("\n", " ")[:60],
-                "days": days_active,
-                "views": impressions,
-                "url": ad_url
+                "name": title.strip(),
+                "views": f"{play_count:,}".replace(",", " "),
+                "likes": f"{digg_count:,}".replace(",", " "),
+                "url": video_url
             })
+
+            if len(products) >= NB_PAR_ENVOI:
+                break
+
         return products
 
     except Exception as e:
@@ -68,26 +81,26 @@ def fetch_apify_dz_ads():
         return []
 
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Recherche des Ads en Algérie (> 7 jours)...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Recherche des produits e-commerce DZ...</b>")
     
-    prods = fetch_apify_dz_ads()
+    prods = fetch_apify_dz_products()
     
     if not prods:
-        send_telegram("⚠️ <i>Aucune nouvelle pub TikTok Ads trouvée pour l'Algérie ce mois-ci pour le moment.</i>")
+        send_telegram("⚠️ <i>Impossible de récupérer les produits DZ actuellement. Réessaie plus tard.</i>")
         return
 
-    send_telegram("🔥 <b>Top Ads TikTok Algérie Détectées</b> 🔥")
+    send_telegram("🔥 <b>Produits E-commerce Détectés en Algérie (58 Wilayas)</b> 🔥")
     time.sleep(1)
 
     for idx, item in enumerate(prods, 1):
-        # Format épuré et concis
+        # Format épuré sans liens inutiles
         msg = f"🏆 <b>WINNER DZ #{idx}</b>\n\n"
-        msg += f"📦 <b>Produit / Pub :</b> {item['name']}\n"
-        msg += f"⏳ <b>Durée active :</b> > {item['days']} jours en 🇩🇿\n"
-        msg += f"📊 <b>Impressions :</b> {item['views']}\n"
+        msg += f"📦 <b>Produit / Titre :</b> {item['name']}\n"
+        msg += f"👁️ <b>Vues :</b> {item['views']}\n"
+        msg += f"❤️ <b>J'aime :</b> {item['likes']}\n"
         
         if item['url']:
-            msg += f"\n🔗 <a href=\"{item['url']}\">Voir la vidéo de la pub</a>"
+            msg += f"\n🎬 <a href=\"{item['url']}\">Voir la vidéo sur TikTok</a>"
 
         send_telegram(msg)
         time.sleep(1)
