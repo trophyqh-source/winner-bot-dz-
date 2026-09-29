@@ -11,6 +11,22 @@ APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_eSD9fRMu37Y6Vrf2Dyn4bFIhI
 
 NB_PAR_ENVOI = 5
 
+# Recherche ciblée sur les produits physiques et gadgets
+KEYWORDS_GADGETS = [
+    "gadget algerie",
+    "accessoire voiture algerie",
+    "produit maison algerie",
+    "boutique en ligne algerie 58 wilayas",
+    "astuce produit algerie"
+]
+
+# Exclusion stricte de la nourriture, pâtisserie et services locaux
+EXCLUDE_WORDS = [
+    "bento", "cake", "cookie", "gateau", "patisserie", "brownie", "sweet",
+    "food", "chocolat", "manger", "restaurant", "fast food", "snack",
+    "salon", "coiffeur", "ongles", "location", "auto ecole"
+]
+
 def send_telegram(text):
     """Envoie un message textuel à Telegram"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -22,21 +38,15 @@ def send_telegram(text):
     }
     requests.post(url, json=payload, timeout=30)
 
-def fetch_apify_dz_products():
-    """Scrape TikTok pour trouver les vidéos e-commerce ciblant l'Algérie"""
-    print("Recherche des produits DZ sur TikTok via Apify...")
+def fetch_apify_gadgets_dz():
+    """Scrape TikTok pour trouver exclusivement des gadgets/produits e-commerce DZ"""
+    print("Recherche de gadgets e-commerce DZ...")
     
     url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
-    # Mots-clés utilisés par les vendeurs e-commerce en Algérie
     payload = {
-        "searchQueries": [
-            "livraison 58 wilayas",
-            "livraison gratuite algerie",
-            "produit algerie ecommerce",
-            "disponible en algerie"
-        ],
-        "resultsPerPage": 10,
+        "searchQueries": KEYWORDS_GADGETS,
+        "resultsPerPage": 20,
         "searchType": "video"
     }
 
@@ -48,28 +58,43 @@ def fetch_apify_dz_products():
 
         items = res.json()
         if not isinstance(items, list) or len(items) == 0:
-            print("Aucun produit DZ trouvé.")
             return []
 
         products = []
+        seen_authors = set()  # Pour éviter les doublons de la même page
+
         for item in items:
-            text = item.get("text") or item.get("desc") or ""
+            author = item.get("authorMeta", {}).get("name", "").lower()
+            text = (item.get("text") or item.get("desc") or "").lower()
             
-            # Filtrer pour ne garder que le contenu pertinent
-            title = text.split("\n")[0][:60]
-            if len(title) < 5:
+            # 1. Ignorer si l'auteur a déjà été sélectionné dans ce cycle
+            if author and author in seen_authors:
+                continue
+
+            # 2. Vérifier si un mot exclu (nourriture/pâtisserie/services) est présent
+            if any(bad_word in text for bad_word in EXCLUDE_WORDS):
+                continue
+
+            # 3. Nettoyer le titre
+            raw_title = item.get("text") or item.get("desc") or ""
+            title = raw_title.split("\n")[0][:65].strip()
+            
+            if len(title) < 6:
                 continue
 
             play_count = item.get("playCount", 0)
             digg_count = item.get("diggCount", 0)
-            video_url = item.get("webVideoUrl") or f"https://www.tiktok.com/@{item.get('authorMeta', {}).get('name', '')}/video/{item.get('id', '')}"
+            video_url = item.get("webVideoUrl") or f"https://www.tiktok.com/@{author}/video/{item.get('id', '')}"
 
             products.append({
-                "name": title.strip(),
+                "name": title,
                 "views": f"{play_count:,}".replace(",", " "),
                 "likes": f"{digg_count:,}".replace(",", " "),
                 "url": video_url
             })
+
+            if author:
+                seen_authors.add(author)
 
             if len(products) >= NB_PAR_ENVOI:
                 break
@@ -81,21 +106,20 @@ def fetch_apify_dz_products():
         return []
 
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Recherche des produits e-commerce DZ...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Filtrage strict Gadgets & E-commerce...</b>")
     
-    prods = fetch_apify_dz_products()
+    prods = fetch_apify_gadgets_dz()
     
     if not prods:
-        send_telegram("⚠️ <i>Impossible de récupérer les produits DZ actuellement. Réessaie plus tard.</i>")
+        send_telegram("⚠️ <i>Aucun nouveau gadget trouvé sur ce passage. Réessai automatique au prochain run.</i>")
         return
 
-    send_telegram("🔥 <b>Produits E-commerce Détectés en Algérie (58 Wilayas)</b> 🔥")
+    send_telegram("🔥 <b>Top Gadgets & Produits E-commerce DZ</b> 🔥")
     time.sleep(1)
 
     for idx, item in enumerate(prods, 1):
-        # Format épuré sans liens inutiles
-        msg = f"🏆 <b>WINNER DZ #{idx}</b>\n\n"
-        msg += f"📦 <b>Produit / Titre :</b> {item['name']}\n"
+        msg = f"🏆 <b>WINNER GADGET #{idx}</b>\n\n"
+        msg += f"📦 <b>Produit :</b> {item['name']}\n"
         msg += f"👁️ <b>Vues :</b> {item['views']}\n"
         msg += f"❤️ <b>J'aime :</b> {item['likes']}\n"
         
