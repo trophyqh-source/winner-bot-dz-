@@ -1,21 +1,21 @@
-import json
 import os
+import re
 import time
 import requests
+from urllib.parse import unquote
 
-# --- CONFIGURATION API & BOT ---
+# --- CONFIGURATION TELEGRAM ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_NHjmiStXhLV8j9cCkGn7QLqEMKwqEc0W7tuw")
 
 NB_PAR_ENVOI = 5
 
-# Requêtes ciblées sur Google pour choper les vidéos TikTok DZ
-GOOGLE_TIKTOK_QUERIES = [
+# Requetes de recherche ciblees sur les produits DZ
+QUERIES = [
     'site:tiktok.com "58 wilayas" "livraison"',
-    'site:tiktok.com "commander" "algerie" "livraison"',
-    'site:tiktok.com "livraison a domicile" "wilaya"',
-    'site:youcan.shop "58 wilayas" "nom" "telephone"'
+    'site:tiktok.com "livraison disponible" "algerie"',
+    'site:tiktok.com "commander" "wilaya"',
+    'site:tiktok.com "prix" "dzd" "livraison"'
 ]
 
 EXCLUDE_WORDS = [
@@ -26,7 +26,7 @@ EXCLUDE_WORDS = [
 ]
 
 def send_telegram(text):
-    """Envoie un message textuel à Telegram"""
+    """Envoie un message textuel a Telegram"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -39,81 +39,92 @@ def send_telegram(text):
     except Exception as e:
         print(f"Erreur envoi Telegram : {e}")
 
-def fetch_winners_via_google():
-    """Scrape Google pour trouver les TikToks et Landing Pages DZ sans aucun blocage IP"""
-    print("Recherche de winners DZ via Google Search Index...")
-    
-    url = f"https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
-
-    # Alternance des requêtes à chaque passage
-    query = GOOGLE_TIKTOK_QUERIES[int(time.time()) % len(GOOGLE_TIKTOK_QUERIES)]
-
-    payload = {
-        "queries": query,
-        "maxPagesPerQuery": 1,
-        "resultsPerPage": 25,
-        "countryCode": "dz"
+def search_duckduckgo(query):
+    """Scrape DuckDuckGo HTML directement sans passer par Apify (0 blocage)"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8"
     }
-
+    url = "https://html.duckduckgo.com/html/"
     try:
-        res = requests.post(url, json=payload, timeout=90)
-        if res.status_code not in [200, 201]:
-            print(f"Erreur Apify status code : {res.status_code}")
+        res = requests.post(url, data={"q": query}, headers=headers, timeout=20)
+        if res.status_code != 200:
             return []
 
-        data = res.json()
-        if not isinstance(data, list) or len(data) == 0:
-            return []
+        # Extraction des titres et liens
+        matches = re.findall(r'class="result__a"\ href="([^"]+)">(.*?)</a>', res.text)
+        snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', res.text)
 
-        organic_results = data[0].get("organicResults", [])
-        if not organic_results:
-            return []
+        items = []
+        for idx, (raw_url, raw_title) in enumerate(matches):
+            title = re.sub(r'<[^>]+>', '', raw_title).strip()
+            
+            # Extraction du vrai lien nettoyé
+            link = raw_url
+            if 'uddg=' in raw_url:
+                link = unquote(raw_url.split('uddg=')[1].split('&')[0])
 
-        products = []
-        seen_links = set()
+            snippet = ""
+            if idx < len(snippets):
+                snippet = re.sub(r'<[^>]+>', '', snippets[idx]).strip()
 
-        for item in organic_results:
-            title = item.get("title", "")
-            link = item.get("url", "")
-            snippet = item.get("description", "")
-            full_text = (title + " " + snippet).lower()
-
-            if link in seen_links:
-                continue
-
-            # Filtre des mots exclus
-            if any(bad in full_text for bad in EXCLUDE_WORDS):
-                continue
-
-            # Nettoyage du titre
-            clean_title = title.replace(" - TikTok", "").replace("TikTok", "").strip()
-            if len(clean_title) < 5:
-                clean_title = "Produit Winner E-Commerce DZ"
-
-            products.append({
-                "title": clean_title,
-                "link": link,
-                "desc": snippet[:110] if snippet else "Produit E-commerce DZ avec livraison 58 wilayas"
+            items.append({
+                "title": title,
+                "url": link,
+                "snippet": snippet
             })
-
-            seen_links.add(link)
-
-            if len(products) >= NB_PAR_ENVOI:
-                break
-
-        return products
-
+        return items
     except Exception as e:
-        print(f"Exception Google Scraper : {e}")
+        print(f"Erreur recherche : {e}")
         return []
 
+def fetch_winners():
+    """Récupère les produits winners DZ"""
+    print("Recherche directe des winners DZ...")
+    products = []
+    seen_urls = set()
+
+    # Alternance dynamique de la requête
+    query = QUERIES[int(time.time()) % len(QUERIES)]
+    raw_results = search_duckduckgo(query)
+
+    for item in raw_results:
+        link = item["url"]
+        title = item["title"]
+        snippet = item["snippet"]
+        full_text = (title + " " + snippet).lower()
+
+        if link in seen_urls:
+            continue
+
+        # Filtrage des mots exclus
+        if any(bad in full_text for bad in EXCLUDE_WORDS):
+            continue
+
+        clean_title = title.replace(" - TikTok", "").replace("TikTok", "").strip()
+        if len(clean_title) < 5:
+            clean_title = "Produit E-Commerce DZ"
+
+        products.append({
+            "title": clean_title,
+            "link": link,
+            "snippet": snippet if snippet else "Produit E-commerce disponible avec livraison 58 wilayas."
+        })
+
+        seen_urls.add(link)
+
+        if len(products) >= NB_PAR_ENVOI:
+            break
+
+    return products
+
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan des Winners E-Commerce DZ...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan direct des Winners E-Commerce DZ...</b>")
     
-    prods = fetch_winners_via_google()
+    prods = fetch_winners()
     
     if not prods:
-        send_telegram("⚠️ <i>Aucun résultat sur ce cycle. Relance automatique au prochain passage.</i>")
+        send_telegram("⚠️ <i>Aucun nouveau lien trouvé sur ce cycle. Relance au prochain passage.</i>")
         return
 
     send_telegram("🔥 <b>Top Winners E-Commerce DZ Trouvés</b> 🔥")
@@ -121,13 +132,9 @@ def run_bot():
 
     for idx, item in enumerate(prods, 1):
         msg = f"🏆 <b>WINNER DZ #{idx}</b>\n\n"
-        msg += f"📦 <b>Produit / Titre :</b> {item['title']}\n"
-        msg += f"📝 <b>Aperçu :</b> {item['desc']}...\n\n"
-        
-        if "tiktok.com" in item['link']:
-            msg += f"🎬 <a href=\"{item['link']}\">Voir la vidéo TikTok</a>"
-        else:
-            msg += f"🌐 <a href=\"{item['link']}\">Voir le site / Landing Page</a>"
+        msg += f"📦 <b>Produit :</b> {item['title']}\n"
+        msg += f"📝 <b>Aperçu :</b> {item['snippet']}\n\n"
+        msg += f"🎬 <a href=\"{item['link']}\">Voir la vidéo TikTok</a>"
 
         send_telegram(msg)
         time.sleep(1)
