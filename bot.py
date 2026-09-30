@@ -15,11 +15,9 @@ KEYWORDS_VARIES = [
     "commander algerie",
     "produit algerie",
     "boutique algerie",
-    "pantalon homme algerie 58 wilayas",
+    "pantalon homme algerie",
     "mini aspirateur portable algerie",
-    "imprimante portable algerie",
-    "gourde motivante algerie",
-    "gadget maison algerie livraison"
+    "gadget maison algerie"
 ]
 
 EXCLUDE_WORDS = [
@@ -28,12 +26,6 @@ EXCLUDE_WORDS = [
     "salon", "coiffeur", "ongles", "location", "auto ecole",
     "maquillage", "makeup", "robe", "abaya", "hijab", "talons", "epilation"
 ]
-
-# --- SEUILS D'ENGAGEMENT (Au moins UN critère rempli) ---
-MIN_LIKES = 5000       # 5 000 J'aime minimum
-MIN_COMMENTS = 500      # OU 500 Commentaires
-MIN_SHARES = 500        # OU 500 Partages
-MIN_SAVES = 300         # OU 300 Enregistrements
 
 def send_telegram(text):
     """Envoie un message textuel à Telegram"""
@@ -50,14 +42,14 @@ def send_telegram(text):
         print(f"Erreur envoi Telegram : {e}")
 
 def fetch_apify_winner_products():
-    """Scrape TikTok et filtre si AU MOINS UN critère d'engagement est atteint"""
-    print("Recherche de produits winners DZ avec filtres d'engagement...")
+    """Scrape TikTok pour trouver des produits DZ sans filtre d'engagement"""
+    print("Recherche de produits DZ sur TikTok (sans filtres d'engagement)...")
     
     url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
     payload = {
         "searchQueries": KEYWORDS_VARIES,
-        "resultsPerPage": 50,
+        "resultsPerPage": 30,
         "searchType": "video"
     }
 
@@ -82,26 +74,15 @@ def fetch_apify_winner_products():
             if author and author in seen_authors:
                 continue
 
-            # 2. Exclusions
+            # 2. Exclusions (nourriture, beauté femme, etc.)
             if any(bad_word in text for bad_word in EXCLUDE_WORDS):
                 continue
 
-            # 3. Récupération des métriques d'engagement
+            # Métriques à titre indicatif uniquement
             digg_count = item.get("diggCount", 0)       # Likes
             comment_count = item.get("commentCount", 0) # Commentaires
             share_count = item.get("shareCount", 0)     # Partages
-            collect_count = item.get("collectCount", 0) # Enregistrements / Favoris
-
-            # 4. Condition OU : AU MOINS UN critère validé
-            has_winner_metrics = (
-                digg_count >= MIN_LIKES or
-                comment_count >= MIN_COMMENTS or
-                share_count >= MIN_SHARES or
-                collect_count >= MIN_SAVES
-            )
-
-            if not has_winner_metrics:
-                continue
+            collect_count = item.get("collectCount", 0) # Enregistrements
 
             raw_title = item.get("text") or item.get("desc") or ""
             title = raw_title.split("\n")[0][:70].strip()
@@ -136,24 +117,24 @@ def fetch_apify_winner_products():
         return []
 
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan des vidéos à fort engagement...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan des vidéos E-commerce DZ...</b>")
     
     prods = fetch_apify_winner_products()
     
     if not prods:
-        send_telegram("⚠️ <i>Aucun produit validant au moins un des critères (>5k likes, >500 coms, >500 partages ou >300 enregistrements) trouvé lors de ce passage.</i>")
+        send_telegram("⚠️ <i>Aucun produit trouvé lors de ce passage. Relance automatique au prochain cycle.</i>")
         return
 
-    send_telegram("🔥 <b>Top Produits E-commerce High-Engagement DZ</b> 🔥")
+    send_telegram("🔥 <b>Top Produits E-commerce DZ Trouvés</b> 🔥")
     time.sleep(1)
 
     for idx, item in enumerate(prods, 1):
         msg = f"🏆 <b>WINNER DZ #{idx}</b>\n\n"
         msg += f"📦 <b>Produit :</b> {item['name']}\n"
         msg += f"🌐 <b>Site / Bio :</b> {item['landing']}\n\n"
-        msg += "📊 <b>Engagement Détecté :</b>\n"
+        msg += "📊 <b>Statistiques :</b>\n"
         msg += f"• 👁️ Vues : {item['views']}\n"
-        msg += f"• ❤️️ Likes : {item['likes']}\n"
+        msg += f"• ❤️ Likes : {item['likes']}\n"
         msg += f"• 💬 Commentaires : {item['comments']}\n"
         msg += f"• 🔖 Enregistrements : {item['saves']}\n"
         msg += f"• 🔁 Partages : {item['shares']}\n"
