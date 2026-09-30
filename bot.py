@@ -10,21 +10,19 @@ APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "apify_api_NHjmiStXhLV8j9cCkGn7QLqEM
 
 NB_PAR_ENVOI = 5
 
+# Mots-clés simples et efficaces E-commerce DZ
 KEYWORDS_VARIES = [
     "livraison 58 wilayas",
     "commander algerie",
     "produit algerie",
-    "boutique algerie",
-    "pantalon homme algerie",
-    "mini aspirateur portable algerie",
-    "gadget maison algerie"
+    "boutique algerie"
 ]
 
 EXCLUDE_WORDS = [
     "bento", "cake", "cookie", "gateau", "patisserie", "brownie", "sweet",
     "food", "chocolat", "manger", "restaurant", "fast food", "snack",
     "salon", "coiffeur", "ongles", "location", "auto ecole",
-    "maquillage", "makeup", "robe", "abaya", "hijab", "talons", "epilation"
+    "maquillage", "makeup", "robe", "abaya", "hijab"
 ]
 
 def send_telegram(text):
@@ -42,55 +40,69 @@ def send_telegram(text):
         print(f"Erreur envoi Telegram : {e}")
 
 def fetch_apify_winner_products():
-    """Scrape TikTok pour trouver des produits DZ sans filtre d'engagement"""
-    print("Recherche de produits DZ sur TikTok (sans filtres d'engagement)...")
+    """Scrape TikTok via l'acteur officiel apify~tiktok-scraper"""
+    print("Recherche de produits DZ sur TikTok...")
     
-    url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
+    # Utilisation de l'acteur officiel TikTok d'Apify
+    url = f"https://api.apify.com/v2/acts/apify~tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
 
     payload = {
-        "searchQueries": KEYWORDS_VARIES,
+        "searchKeywords": KEYWORDS_VARIES,
         "resultsPerPage": 30,
-        "searchType": "video"
+        "searchSection": "/video"
     }
 
     try:
         res = requests.post(url, json=payload, timeout=90)
+        
+        # En cas d'échec, tentative de secours avec format alternatif
+        if res.status_code not in [200, 201]:
+            print(f"Tentative alternative (status {res.status_code})...")
+            url = f"https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
+            payload = {
+                "searchQueries": ["livraison 58 wilayas", "commander algerie"],
+                "resultsPerPage": 20
+            }
+            res = requests.post(url, json=payload, timeout=90)
+
         if res.status_code not in [200, 201]:
             print(f"Erreur Apify status code : {res.status_code}")
             return []
 
         items = res.json()
         if not isinstance(items, list) or len(items) == 0:
+            print("Aucun élément retourné par l'API")
             return []
 
         products = []
         seen_authors = set()
 
         for item in items:
-            author = item.get("authorMeta", {}).get("name", "").lower()
+            author = item.get("authorMeta", {}).get("name", "") or item.get("author", "")
+            author = author.lower()
+            
             text = (item.get("text") or item.get("desc") or "").lower()
             
-            # 1. Dédoublonnage des comptes
+            # 1. Dédoublonnage
             if author and author in seen_authors:
                 continue
 
-            # 2. Exclusions (nourriture, beauté femme, etc.)
+            # 2. Exclusions
             if any(bad_word in text for bad_word in EXCLUDE_WORDS):
                 continue
 
-            # Métriques à titre indicatif uniquement
-            digg_count = item.get("diggCount", 0)       # Likes
-            comment_count = item.get("commentCount", 0) # Commentaires
-            share_count = item.get("shareCount", 0)     # Partages
-            collect_count = item.get("collectCount", 0) # Enregistrements
+            digg_count = item.get("diggCount") or item.get("stats", {}).get("diggCount", 0)
+            comment_count = item.get("commentCount") or item.get("stats", {}).get("commentCount", 0)
+            share_count = item.get("shareCount") or item.get("stats", {}).get("shareCount", 0)
+            collect_count = item.get("collectCount") or item.get("stats", {}).get("collectCount", 0)
+            play_count = item.get("playCount") or item.get("stats", {}).get("playCount", 0)
 
             raw_title = item.get("text") or item.get("desc") or ""
             title = raw_title.split("\n")[0][:70].strip()
             if len(title) < 3:
                 title = f"Produit E-commerce DZ (@{author})"
 
-            play_count = item.get("playCount", 0)
-            video_url = item.get("webVideoUrl") or f"https://www.tiktok.com/@{author}/video/{item.get('id', '')}"
+            video_url = item.get("webVideoUrl") or item.get("videoUrl") or f"https://www.tiktok.com/@{author}/video/{item.get('id', '')}"
             bio_link = item.get("authorMeta", {}).get("bioLink", "")
 
             products.append({
@@ -117,7 +129,7 @@ def fetch_apify_winner_products():
         return []
 
 def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan des vidéos E-commerce DZ...</b>")
+    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan TikTok E-Commerce DZ...</b>")
     
     prods = fetch_apify_winner_products()
     
