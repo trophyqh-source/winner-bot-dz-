@@ -25,7 +25,7 @@ QUERIES = [
     "boutique alger",
 ]
 
-RESULTS_PER_QUERY = 10          # vidéos récupérées par recherche (limite le coût Apify)
+RESULTS_PER_QUERY = 8           # vidéos récupérées par recherche (limite le coût Apify)
 MAX_SEND = 5                    # produits envoyés par exécution
 MAX_AGE_DAYS = 30               # ignore les vidéos plus vieilles que ça
 MIN_HOURS_BETWEEN_SCANS = 20    # protège ton crédit Apify gratuit (1 scan par jour max)
@@ -219,8 +219,16 @@ def run():
         videos = fetch_videos()
     except Exception as e:
         print(f"Erreur Apify : {e}")
-        send_telegram(f"⚠️ WinnerBotDZ : erreur Apify\n<code>{html.escape(str(e)[:300])}</code>")
-        sys.exit(1)
+        if "not-enough-usage" in str(e) or "402" in str(e):
+            send_telegram(
+                "⚠️ WinnerBotDZ : ton crédit gratuit Apify est épuisé pour ce mois. "
+                "Le bot reprendra tout seul quand le crédit sera renouvelé."
+            )
+        else:
+            send_telegram(f"⚠️ WinnerBotDZ : erreur Apify\n<code>{html.escape(str(e)[:300])}</code>")
+        # On mémorise l'essai pour ne pas renvoyer ce message toutes les 6 heures
+        save_state(seen, now)
+        return
 
     print(f"{len(videos)} vidéos récupérées.")
 
