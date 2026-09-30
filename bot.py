@@ -1,143 +1,129 @@
 import os
-import re
 import time
 import requests
-from urllib.parse import unquote
+from bs4 import BeautifulSoup
+from duckduckgo_search import DDGS
 
-# --- CONFIGURATION TELEGRAM ---
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+# Configuration depuis les variables d'environnement GitHub Secrets
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+SEEN_FILE = "seen_links.txt"
 
-NB_PAR_ENVOI = 5
+# Clés optionnelles pour l'API Google Search officielle (zéro blocage)
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_CX = os.getenv("GOOGLE_CX")
 
-# Requetes de recherche ciblees sur les produits DZ
+# Mots-clés E-commerce Algérie
 QUERIES = [
     'site:tiktok.com "58 wilayas" "livraison"',
-    'site:tiktok.com "livraison disponible" "algerie"',
-    'site:tiktok.com "commander" "wilaya"',
-    'site:tiktok.com "prix" "dzd" "livraison"'
+    'site:tiktok.com "livraison gratuite" "algerie"',
+    'site:tiktok.com "prix" "commander" "wilaya"',
+    'site:tiktok.com "boutique" "alger"'
 ]
 
-EXCLUDE_WORDS = [
-    "bento", "cake", "cookie", "gateau", "patisserie", "brownie",
-    "food", "chocolat", "restaurant", "fast food",
-    "salon", "coiffeur", "ongles", "location", "auto ecole",
-    "maquillage", "makeup", "robe", "abaya", "hijab"
-]
-
-def send_telegram(text):
-    """Envoie un message textuel a Telegram"""
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+def send_telegram_message(message):
+    """Envoie une notification sur Telegram."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
+        "text": message,
         "parse_mode": "HTML",
-        "disable_web_page_preview": True,
+        "disable_web_page_preview": False
     }
     try:
-        requests.post(url, json=payload, timeout=30)
+        res = requests.post(url, json=payload, timeout=10)
+        return res.status_code == 200
     except Exception as e:
-        print(f"Erreur envoi Telegram : {e}")
+        print(f"❌ Erreur envoi Telegram : {e}")
+        return False
 
-def search_duckduckgo(query):
-    """Scrape DuckDuckGo HTML directement sans passer par Apify (0 blocage)"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8"
+def load_seen_links():
+    """Charge l'historique des liens déjà envoyés."""
+    if os.path.exists(SEEN_FILE):
+        with open(SEEN_FILE, "r", encoding="utf-8") as f:
+            return set(line.strip() for line in f if line.strip())
+    return set()
+
+def save_seen_links(seen):
+    """Sauvegarde les liens vus."""
+    with open(SEEN_FILE, "w", encoding="utf-8") as f:
+        for link in seen:
+            f.write(f"{link}\n")
+
+def fetch_google_api(query):
+    """Recherche via Google API officielle (si configurée)."""
+    links = []
+    if not GOOGLE_API_KEY or not GOOGLE_CX:
+        return links
+    
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": GOOGLE_API_KEY,
+        "cx": GOOGLE_CX,
+        "q": query,
+        "num": 10
     }
-    url = "https://html.duckduckgo.com/html/"
     try:
-        res = requests.post(url, data={"q": query}, headers=headers, timeout=20)
-        if res.status_code != 200:
-            return []
-
-        # Extraction des titres et liens
-        matches = re.findall(r'class="result__a"\ href="([^"]+)">(.*?)</a>', res.text)
-        snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', res.text)
-
-        items = []
-        for idx, (raw_url, raw_title) in enumerate(matches):
-            title = re.sub(r'<[^>]+>', '', raw_title).strip()
-            
-            # Extraction du vrai lien nettoyé
-            link = raw_url
-            if 'uddg=' in raw_url:
-                link = unquote(raw_url.split('uddg=')[1].split('&')[0])
-
-            snippet = ""
-            if idx < len(snippets):
-                snippet = re.sub(r'<[^>]+>', '', snippets[idx]).strip()
-
-            items.append({
-                "title": title,
-                "url": link,
-                "snippet": snippet
-            })
-        return items
+        res = requests.get(url, params=params, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            for item in data.get("items", []):
+                link = item.get("link")
+                if link and "tiktok.com" in link:
+                    links.append(link)
     except Exception as e:
-        print(f"Erreur recherche : {e}")
-        return []
+        print(f"⚠️ Erreur Google API : {e}")
+    return links
 
-def fetch_winners():
-    """Récupère les produits winners DZ"""
-    print("Recherche directe des winners DZ...")
-    products = []
-    seen_urls = set()
+def fetch_duckduckgo_ddgs(query):
+    """Recherche via le package duckduckgo_search."""
+    links = []
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=10))
+            for r in results:
+                url = r.get("href")
+                if url and "tiktok.com" in url:
+                    links.append(url)
+    except Exception as e:
+        print(f"⚠️ Erreur DuckDuckGo DDGS : {e}")
+    return links
 
-    # Alternance dynamique de la requête
-    query = QUERIES[int(time.time()) % len(QUERIES)]
-    raw_results = search_duckduckgo(query)
+def run():
+    seen_links = load_seen_links()
+    new_found = 0
 
-    for item in raw_results:
-        link = item["url"]
-        title = item["title"]
-        snippet = item["snippet"]
-        full_text = (title + " " + snippet).lower()
+    print("🚀 Début de la recherche de produits gagnants TikTok...")
 
-        if link in seen_urls:
-            continue
+    for query in QUERIES:
+        print(f"🔎 Recherche pour : {query}")
+        
+        # 1. Tentative via Google API officielle si disponible
+        links = fetch_google_api(query)
+        
+        # 2. Sinon, secours via DuckDuckGo
+        if not links:
+            links = fetch_duckduckgo_ddgs(query)
 
-        # Filtrage des mots exclus
-        if any(bad in full_text for bad in EXCLUDE_WORDS):
-            continue
+        for link in links:
+            # Nettoyage de l'URL
+            clean_link = link.split('?')[0]
 
-        clean_title = title.replace(" - TikTok", "").replace("TikTok", "").strip()
-        if len(clean_title) < 5:
-            clean_title = "Produit E-Commerce DZ"
+            if clean_link not in seen_links:
+                seen_links.add(clean_link)
+                msg = f"🛒 <b>Nouveau produit / Vidéo TikTok trouvé !</b>\n\n🔗 {clean_link}"
+                
+                if send_telegram_message(msg):
+                    print(f"✅ Envoyé sur Telegram : {clean_link}")
+                    new_found += 1
+                    time.sleep(2)  # Pause pour éviter d'être bloqué par Telegram
+                else:
+                    print(f"❌ Échec envoi : {clean_link}")
 
-        products.append({
-            "title": clean_title,
-            "link": link,
-            "snippet": snippet if snippet else "Produit E-commerce disponible avec livraison 58 wilayas."
-        })
+        time.sleep(3)
 
-        seen_urls.add(link)
-
-        if len(products) >= NB_PAR_ENVOI:
-            break
-
-    return products
-
-def run_bot():
-    send_telegram("🇩🇿 <b>WinnerBotDZ : Scan direct des Winners E-Commerce DZ...</b>")
-    
-    prods = fetch_winners()
-    
-    if not prods:
-        send_telegram("⚠️ <i>Aucun nouveau lien trouvé sur ce cycle. Relance au prochain passage.</i>")
-        return
-
-    send_telegram("🔥 <b>Top Winners E-Commerce DZ Trouvés</b> 🔥")
-    time.sleep(1)
-
-    for idx, item in enumerate(prods, 1):
-        msg = f"🏆 <b>WINNER DZ #{idx}</b>\n\n"
-        msg += f"📦 <b>Produit :</b> {item['title']}\n"
-        msg += f"📝 <b>Aperçu :</b> {item['snippet']}\n\n"
-        msg += f"🎬 <a href=\"{item['link']}\">Voir la vidéo TikTok</a>"
-
-        send_telegram(msg)
-        time.sleep(1)
+    save_seen_links(seen_links)
+    print(f"🎉 Fin du cycle. {new_found} nouveau(x) lien(s) trouvé(s) et envoyé(s).")
 
 if __name__ == "__main__":
-    run_bot()
+    run()
