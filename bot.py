@@ -10,11 +10,11 @@ import requests
 # ------------------------------------------------------------------
 # Configuration (les secrets viennent de GitHub Actions)
 # ------------------------------------------------------------------
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 APIFY_TOKEN = os.getenv("APIFY_TOKEN")
 
-SEEN_FILE = "seen_videos.json"
+SEEN_FILE = "seen_products.json"
 APIFY_ACTOR = "clockworks~tiktok-scraper"
 
 # Recherches TikTok (e-commerce Algérie)
@@ -25,9 +25,10 @@ QUERIES = [
     "boutique alger",
 ]
 
-RESULTS_PER_QUERY = int(os.getenv("RESULTS_PER_QUERY", "15"))  # limite le coût Apify
-MAX_SEND = int(os.getenv("MAX_SEND", "5"))                     # produits envoyés par exécution
-MAX_AGE_DAYS = int(os.getenv("MAX_AGE_DAYS", "30"))            # ignore les vidéos trop vieilles
+RESULTS_PER_QUERY = 10          # vidéos récupérées par recherche (limite le coût Apify)
+MAX_SEND = 5                    # produits envoyés par exécution
+MAX_AGE_DAYS = 30               # ignore les vidéos plus vieilles que ça
+MIN_HOURS_BETWEEN_SCANS = 20    # protège ton crédit Apify gratuit (1 scan par jour max)
 
 # Une vidéo est retenue si AU MOINS UN seuil est atteint
 MIN_LIKES = 5000
@@ -58,21 +59,35 @@ def send_telegram(text):
 
 
 # ------------------------------------------------------------------
-# Historique (évite les doublons)
+# Historique (évite les doublons + limite les scans)
 # ------------------------------------------------------------------
-def load_seen():
+def load_state():
+    """Renvoie (ensemble des IDs déjà envoyés, date du dernier scan)."""
+    seen = set()
+    last_run = None
     if os.path.exists(SEEN_FILE):
         try:
             with open(SEEN_FILE, "r", encoding="utf-8") as f:
-                return set(json.load(f))
+                data = json.load(f)
+            if isinstance(data, dict):
+                seen = {str(x) for x in data.get("videos", []) if isinstance(x, (str, int))}
+                last_run = data.get("last_run")
+            elif isinstance(data, list):
+                # ancien format : simple liste
+                seen = {str(x) for x in data if isinstance(x, (str, int))}
         except Exception as e:
             print(f"Historique illisible, on repart de zéro : {e}")
-    return set()
+    return seen, last_run
 
 
-def save_seen(seen):
+def save_state(seen, last_run):
     with open(SEEN_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(seen), f, ensure_ascii=False, indent=0)
+        json.dump(
+            {"last_run": last_run, "videos": sorted(seen)},
+            f,
+            ensure_ascii=False,
+            indent=1,
+        )
 
 
 # ------------------------------------------------------------------
@@ -175,19 +190,36 @@ def build_message(video, url):
 # Programme principal
 # ------------------------------------------------------------------
 def run():
-    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID and APIFY_TOKEN):
-        print("Il manque TELEGRAM_TOKEN, TELEGRAM_CHAT_ID ou APIFY_TOKEN dans les secrets.")
+    missing = [
+        name
+        for name, value in (
+            ("TELEGRAM_BOT_TOKEN", TELEGRAM_TOKEN),
+            ("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID),
+            ("APIFY_TOKEN", APIFY_TOKEN),
+        )
+        if not value
+    ]
+    if missing:
+        print("Secrets manquants ou vides : " + ", ".join(missing))
         sys.exit(1)
 
-    seen = load_seen()
+    seen, last_run = load_state()
     print(f"{len(seen)} vidéos déjà envoyées dans l'historique.")
+
+    # Protection du crédit Apify : un lancement manuel passe toujours
+    manual = os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    now = time.time()
+    if not manual and isinstance(last_run, (int, float)):
+        hours = (now - last_run) / 3600
+        if hours < MIN_HOURS_BETWEEN_SCANS:
+            print(f"Dernier scan il y a {hours:.1f} h : on attend, pas de scan cette fois.")
+            return
 
     try:
         videos = fetch_videos()
     except Exception as e:
         print(f"Erreur Apify : {e}")
         send_telegram(f"⚠️ WinnerBotDZ : erreur Apify\n<code>{html.escape(str(e)[:300])}</code>")
-        save_seen(seen)
         sys.exit(1)
 
     print(f"{len(videos)} vidéos récupérées.")
@@ -214,7 +246,7 @@ def run():
             sent += 1
             time.sleep(2)
 
-    save_seen(seen)
+    save_state(seen, now)
     print(f"Terminé : {sent} produit(s) envoyé(s).")
 
 
