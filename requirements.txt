@@ -1,3 +1,4 @@
 requests
 beautifulsoup4
-apify-client
+duckduckgo-search
+
