@@ -24,7 +24,7 @@ USE_INSTAGRAM = True            # Reels Instagram trouvés par hashtags
 USE_AD_LIBRARY = True           # pubs de la Meta Ad Library (Facebook + Instagram)
 
 # Scrapers Apify utilisés
-FB_VIDEO_ACTOR = "automation-lab~facebook-video-search-scraper"
+FB_VIDEO_ACTOR = "natanielsantos~facebook-video-search-scraper"
 INSTAGRAM_ACTOR = "apify~instagram-hashtag-scraper"
 AD_LIBRARY_ACTOR = "apify~facebook-ads-scraper"
 
@@ -49,7 +49,7 @@ AD_LIBRARY_KEYWORDS = [
 ]
 
 # --- Volumes (plus c'est grand, plus ça coûte) ---
-FB_VIDEOS_MAX = 60              # vidéos Facebook récupérées au total
+FB_VIDEOS_PER_QUERY = 30        # vidéos Facebook récupérées par mot-clé (maximum 100)
 INSTAGRAM_PER_HASHTAG = 30      # reels récupérés par hashtag
 ADS_PER_KEYWORD = 50            # pubs récupérées par mot-clé
 MAX_COST_PER_SOURCE = 1.5       # plafond de sécurité en dollars par source et par scan
@@ -316,28 +316,29 @@ def posts_to_items(posts, seen):
 def collect_facebook_videos(seen):
     rows = run_actor(
         FB_VIDEO_ACTOR,
-        {"searchQueries": FB_VIDEO_QUERIES, "maxItems": FB_VIDEOS_MAX, "maxScrolls": 20},
+        {"searchTerms": FB_VIDEO_QUERIES, "maxItems": FB_VIDEOS_PER_QUERY},
         MAX_COST_PER_SOURCE,
     )
     posts = []
     for r in rows:
-        url = r.get("url")
+        url = r.get("videoUrl")
         if not url:
             continue
-        shares_raw = r.get("sharesText")
-        title = r.get("title") or ""
+        description = r.get("description") or ""
+        author = r.get("author") or {}
+        shares = r.get("shareCount")
         posts.append({
             "platform": "Facebook",
-            "key": "fb:" + str(r.get("videoId") or url),
+            "key": "fb:" + str(r.get("postId") or url),
             "url": url,
-            "author": r.get("creator") or "?",
-            "text": title,
-            "likes": parse_count(r.get("reactionsText")),
-            "comments": parse_count(r.get("commentsText")),
-            "shares": parse_count(shares_raw) if shares_raw else None,
-            "views": parse_count(r.get("viewsText")),
-            "age_days": parse_age_text(r.get("publishedAtText")),
-            "links": find_landing_links(title),
+            "author": (author.get("name") if isinstance(author, dict) else None) or "?",
+            "text": description,
+            "likes": parse_count(r.get("totalReactionCount")),
+            "comments": parse_count(r.get("commentCount")),
+            "shares": parse_count(shares) if shares is not None else None,
+            "views": parse_count(r.get("viewCount")),
+            "age_days": age_from_timestamp(r.get("creationTime")),
+            "links": find_landing_links(description),
         })
     return len(rows), posts_to_items(posts, seen)
 
