@@ -25,7 +25,8 @@ QUERIES = [
     "boutique alger",
 ]
 
-RESULTS_PER_QUERY = 8           # vidéos récupérées par recherche (limite le coût Apify)
+RESULTS_PER_QUERY = 50          # vidéos récupérées par recherche (4 recherches = 200 vidéos par scan)
+MAX_COST_PER_SCAN = 1.5         # plafond de sécurité en dollars par scan (Apify arrête le scan au-delà)
 MAX_SEND = 5                    # produits envoyés par exécution
 MIN_HOURS_BETWEEN_SCANS = 20    # protège ton crédit Apify gratuit (1 scan par jour max)
 
@@ -96,8 +97,9 @@ def save_state(seen, last_run):
 # Apify
 # ------------------------------------------------------------------
 def fetch_videos():
-    """Lance le scraper TikTok sur Apify et renvoie la liste des vidéos."""
-    url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items"
+    """Lance le scraper TikTok sur Apify, attend la fin, et renvoie la liste des vidéos."""
+    base = "https://api.apify.com/v2"
+    params = {"token": APIFY_TOKEN, "maxTotalChargeUsd": MAX_COST_PER_SCAN}
     payload = {
         "searchQueries": QUERIES,
         "resultsPerPage": RESULTS_PER_QUERY,
@@ -106,10 +108,42 @@ def fetch_videos():
         "shouldDownloadSubtitles": False,
         "shouldDownloadSlideshowImages": False,
     }
-    r = requests.post(url, params={"token": APIFY_TOKEN}, json=payload, timeout=330)
+
+    # 1. Démarrer le scan
+    r = requests.post(f"{base}/acts/{APIFY_ACTOR}/runs", params=params, json=payload, timeout=60)
     if r.status_code not in (200, 201):
         raise RuntimeError(f"Apify a répondu {r.status_code} : {r.text[:300]}")
-    data = r.json()
+    run = r.json().get("data") or {}
+    run_id = run.get("id")
+    dataset_id = run.get("defaultDatasetId")
+    if not run_id or not dataset_id:
+        raise RuntimeError(f"Réponse Apify inattendue : {str(run)[:300]}")
+
+    # 2. Attendre la fin du scan (jusqu'à 25 minutes)
+    deadline = time.time() + 25 * 60
+    status = run.get("status")
+    while status in ("READY", "RUNNING"):
+        if time.time() > deadline:
+            raise RuntimeError("Le scan Apify prend trop de temps (plus de 25 minutes).")
+        time.sleep(10)
+        rr = requests.get(f"{base}/actor-runs/{run_id}", params={"token": APIFY_TOKEN}, timeout=30)
+        if rr.status_code != 200:
+            raise RuntimeError(f"Apify a répondu {rr.status_code} : {rr.text[:300]}")
+        run = rr.json().get("data") or {}
+        status = run.get("status")
+
+    if status != "SUCCEEDED":
+        raise RuntimeError(f"Le scan Apify s'est terminé avec le statut : {status}")
+
+    # 3. Récupérer les vidéos
+    ri = requests.get(
+        f"{base}/datasets/{dataset_id}/items",
+        params={"token": APIFY_TOKEN, "format": "json", "clean": "true"},
+        timeout=120,
+    )
+    if ri.status_code != 200:
+        raise RuntimeError(f"Apify a répondu {ri.status_code} : {ri.text[:300]}")
+    data = ri.json()
     if not isinstance(data, list):
         raise RuntimeError(f"Réponse Apify inattendue : {str(data)[:300]}")
     return data
