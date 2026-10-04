@@ -27,14 +27,16 @@ QUERIES = [
 
 RESULTS_PER_QUERY = 8           # vidéos récupérées par recherche (limite le coût Apify)
 MAX_SEND = 5                    # produits envoyés par exécution
-MAX_AGE_DAYS = 30               # ignore les vidéos plus vieilles que ça
 MIN_HOURS_BETWEEN_SCANS = 20    # protège ton crédit Apify gratuit (1 scan par jour max)
 
-# Une vidéo est retenue si AU MOINS UN seuil est atteint
-MIN_LIKES = 5000
-MIN_COMMENTS = 500
-MIN_SHARES = 500
-MIN_SAVES = 300
+# Âge de la pub : elle doit tourner depuis plus de 7 jours, jusqu'à ~2 mois
+MIN_AGE_DAYS = 7
+MAX_AGE_DAYS = 60
+
+# Filtres d'engagement
+MIN_LIKES = 500                 # minimum de j'aime pour être pris en compte
+MIN_COMMENT_RATIO = 0.4         # commentaires >= 40 % des j'aime (ex : 1000 j'aime -> 400 commentaires)
+MIN_SHARE_RATIO = 0.05          # partages >= 5 % des j'aime (mets 0 pour désactiver)
 
 
 # ------------------------------------------------------------------
@@ -140,16 +142,21 @@ def is_recent(video):
     d = video_date(video)
     if d is None:
         return True  # date inconnue : on ne l'écarte pas
-    return (datetime.now(timezone.utc) - d).days <= MAX_AGE_DAYS
+    age = (datetime.now(timezone.utc) - d).days
+    return MIN_AGE_DAYS <= age <= MAX_AGE_DAYS
 
 
 def is_winner(video):
-    return (
-        num(video, "diggCount") >= MIN_LIKES
-        or num(video, "commentCount") >= MIN_COMMENTS
-        or num(video, "shareCount") >= MIN_SHARES
-        or num(video, "collectCount") >= MIN_SAVES
-    )
+    likes = num(video, "diggCount")
+    comments = num(video, "commentCount")
+    shares = num(video, "shareCount")
+    if likes < MIN_LIKES:
+        return False
+    if comments < likes * MIN_COMMENT_RATIO:
+        return False
+    if shares < likes * MIN_SHARE_RATIO:
+        return False
+    return True
 
 
 def score(video):
@@ -253,6 +260,12 @@ def run():
             seen.add(vid)
             sent += 1
             time.sleep(2)
+
+    if sent == 0:
+        send_telegram(
+            f"ℹ️ WinnerBotDZ : scan terminé, {len(videos)} vidéos analysées, "
+            "aucune ne passe tes filtres aujourd'hui."
+        )
 
     save_state(seen, now)
     print(f"Terminé : {sent} produit(s) envoyé(s).")
